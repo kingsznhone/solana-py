@@ -3,7 +3,15 @@
 from __future__ import annotations
 
 from time import sleep, time
-from typing import Any, Dict, List, Optional, Sequence, Type, Union, get_args
+from typing import (
+    Dict,
+    List,
+    Optional,
+    Sequence,
+    TypeVar,
+    Union,
+    get_args,
+)
 
 from solders.message import VersionedMessage
 from solders.pubkey import Pubkey
@@ -70,7 +78,8 @@ from solana.rpc import types
 from .commitment import Commitment
 from .core import (
     JsonRpcRequestBody,
-    JsonRpcResponseParser,
+    JsonRpcResponseParserType,
+    _decode_rpc_response,
     _COMMITMENT_TO_SOLDERS,
     RPCException,
     TransactionExpiredBlockheightExceededError,
@@ -78,6 +87,8 @@ from .core import (
     _ClientCore,
 )
 from .providers import http
+
+_ParsedT = TypeVar("_ParsedT")
 
 
 class Client(_ClientCore):  # pylint: disable=too-many-public-methods
@@ -103,12 +114,17 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
         super().__init__(commitment)
         self._provider = http.HTTPProvider(endpoint, timeout=timeout, extra_headers=extra_headers, proxy=proxy)
 
-    def send_custom_request(self, body: JsonRpcRequestBody, parser: Type[JsonRpcResponseParser]) -> Any:
+    def send_custom_request(
+        self,
+        body: JsonRpcRequestBody,
+        parser: JsonRpcResponseParserType[_ParsedT],
+    ) -> _ParsedT:
         """Make a raw RPC request with a custom body and parser.
 
         This allows calling any RPC method that is not yet supported by the client,
         as long as the ``body`` object has a ``to_json()`` method and the
-        ``parser`` has a ``from_json(raw: str)`` classmethod.
+        ``parser`` is a response class with ``from_json(raw: str)``
+        (including solders responses).
 
         The body can be:
             - A solders request body from ``solders.rpc.requests`` (e.g. ``GetRecentPrioritizationFees``)
@@ -146,12 +162,13 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
         Args:
             body: A request body object with a ``to_json()`` method
                 (e.g. from ``solders.rpc.requests`` or ``CustomRequestBody``).
-            parser: A response class with a ``from_json(raw: str)`` classmethod.
+            parser: A solders/custom response class with ``from_json(raw: str)``.
 
         Returns:
             The parsed response object.
         """
-        return self._provider.make_request(body, parser)  # type: ignore[arg-type]
+        raw = self._provider.make_request_unparsed(body)
+        return _decode_rpc_response(raw, parser)
 
     def is_connected(self) -> bool:
         """Health check.

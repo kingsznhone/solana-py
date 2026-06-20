@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- Custom JSON-RPC response parsers now require a solders-compatible response parser class with `from_json(raw: str)`.
+
+### Removed
+
+- **BREAKING**: Remove deprecated `(Async)HTTPProvider.make_batch_request(_unparsed)` APIs. Use individual requests instead.
+
 ## [0.37.1] - 2026-06-19
 
 ### Added

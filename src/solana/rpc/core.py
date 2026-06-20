@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import json
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import (
     Any,
@@ -14,8 +14,11 @@ from typing import (
     Optional,
     Protocol,
     Tuple,
+    TypeAlias,
     TypeVar,
     Union,
+    cast,
+    get_args,
     overload,
     runtime_checkable,
 )
@@ -96,7 +99,11 @@ from solders.rpc.requests import (
     SimulateVersionedTransaction,
     ValidatorExit,
 )
-from solders.rpc.responses import GetLatestBlockhashResp, SendTransactionResp
+from solders.rpc.responses import (
+    GetLatestBlockhashResp,
+    RPCError as SoldersRPCError,
+    SendTransactionResp,
+)
 from solders.signature import Signature
 from solders.transaction import Transaction, VersionedTransaction
 from solders.transaction_status import UiTransactionEncoding
@@ -128,6 +135,7 @@ _LARGEST_ACCOUNTS_FILTER_TO_SOLDERS = {
     "circulating": RpcLargestAccountsFilter.Circulating,
     "nonCirculating": RpcLargestAccountsFilter.NonCirculating,
 }
+_SOLDERS_RPC_ERROR_TYPES = get_args(SoldersRPCError)
 
 
 class RPCException(Exception):
@@ -146,6 +154,10 @@ class TransactionExpiredBlockheightExceededError(Exception):
     """Raise when confirming an expired transaction that exceeded the blockheight."""
 
 
+_ParserResultT_co = TypeVar("_ParserResultT_co", covariant=True)
+_ParsedT = TypeVar("_ParsedT")
+
+
 @runtime_checkable
 class JsonRpcRequestBody(Protocol):
     """Protocol for JSON-RPC 2.0 request bodies.
@@ -160,7 +172,7 @@ class JsonRpcRequestBody(Protocol):
 
 
 @runtime_checkable
-class JsonRpcResponseParser(Protocol):
+class JsonRpcResponseParser(Protocol[_ParserResultT_co]):
     """Protocol for JSON-RPC 2.0 response parsers.
 
     Any class with a ``from_json(raw: str) -> ...`` classmethod satisfies this
@@ -172,9 +184,89 @@ class JsonRpcResponseParser(Protocol):
     """
 
     @classmethod
-    def from_json(cls, raw: str) -> Any:
+    def from_json(cls, raw: str) -> "_ParserResultT_co":
         """Decode from a raw JSON response string."""
         ...
+
+
+JsonRpcResponseParserType: TypeAlias = type[_ParsedT]
+
+
+def _validate_jsonrpc_envelope(raw: str) -> dict[str, Any]:
+    """Validate a JSON-RPC 2.0 single-response envelope and map protocol errors."""
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RPCException(
+            {
+                "code": -32700,
+                "message": "Invalid JSON in RPC response",
+                "data": str(exc),
+            }
+        ) from exc
+
+    if not isinstance(data, dict):
+        raise RPCException(
+            {
+                "code": -32603,
+                "message": "Invalid JSON-RPC response envelope: expected object",
+            }
+        )
+
+    if data.get("jsonrpc") != "2.0":
+        raise RPCException(
+            {
+                "code": -32603,
+                "message": "Invalid JSON-RPC response envelope: unsupported jsonrpc version",
+            }
+        )
+
+    has_result = "result" in data
+    has_error = "error" in data
+
+    if has_error:
+        error = data["error"]
+        if not isinstance(error, dict) or "code" not in error or "message" not in error:
+            raise RPCException(
+                {
+                    "code": -32603,
+                    "message": "Invalid JSON-RPC error object in response envelope",
+                }
+            )
+        raise RPCException(error)
+
+    if not has_result:
+        raise RPCNoResultException("RPC response envelope does not contain result")
+
+    return data
+
+
+def _decode_rpc_response(
+    raw: str,
+    parser: JsonRpcResponseParserType[_ParsedT],
+) -> _ParsedT:
+    decoder = getattr(parser, "from_json", None)
+    if not callable(decoder):
+        raise TypeError("Parser classes must define from_json(raw: str)")
+    decoder = cast(Callable[[str], _ParsedT], decoder)
+    try:
+        parsed = decoder(raw)
+    except RPCException:
+        raise
+    except Exception as exc:
+        _validate_jsonrpc_envelope(raw)
+        raise RPCException(
+            {
+                "code": -32603,
+                "message": "Failed to decode RPC response",
+                "data": str(exc),
+            }
+        ) from exc
+
+    if isinstance(parsed, _SOLDERS_RPC_ERROR_TYPES):
+        raise RPCException(parsed)
+    _validate_jsonrpc_envelope(raw)
+    return parsed
 
 
 # -------------------------------------------------------

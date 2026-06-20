@@ -24,6 +24,7 @@ from tests.validator_runtime import (
 from tests.utils import AIRDROP_AMOUNT, assert_valid_response
 
 pytest_plugins = ["tests.fixture_accounts"]
+TEST_RPC_TIMEOUT_SECS = 30
 
 
 @pytest.fixture(scope="session")
@@ -76,14 +77,14 @@ def validator_ws_url(solana_test_validator: ValidatorConfig) -> str:
 @pytest.fixture(scope="session")
 def unit_test_http_client() -> Client:
     """Client to be used in unit tests."""
-    client = Client(commitment=Processed)
+    client = Client(commitment=Processed, timeout=TEST_RPC_TIMEOUT_SECS)
     return client
 
 
 @pytest.fixture(scope="session")
 def unit_test_http_client_async() -> AsyncClient:
     """Async client to be used in unit tests."""
-    client = AsyncClient(commitment=Processed)
+    client = AsyncClient(commitment=Processed, timeout=TEST_RPC_TIMEOUT_SECS)
     return client
 
 
@@ -93,7 +94,7 @@ def test_http_client(
     validator_rpc_url: str,
 ) -> Client:
     """Sync HTTP client pointed at the local test validator."""
-    client = Client(endpoint=validator_rpc_url, commitment=Processed)
+    client = Client(endpoint=validator_rpc_url, commitment=Processed, timeout=TEST_RPC_TIMEOUT_SECS)
     # Wait until slot 5 is finalized so early-slot tests (e.g. get_block) pass
     timeout_secs = env_int("SOLANA_TEST_BLOCK_READY_TIMEOUT", 120)
     deadline = time.time() + timeout_secs
@@ -127,10 +128,10 @@ async def test_http_client_async(
     validator_rpc_url: str,
 ) -> AsyncGenerator[AsyncClient, None]:
     """Async HTTP client pointed at the local test validator."""
-    http_client = AsyncClient(endpoint=validator_rpc_url, commitment=Processed)
+    http_client = AsyncClient(endpoint=validator_rpc_url, commitment=Processed, timeout=TEST_RPC_TIMEOUT_SECS)
     # Use a sync client for the readiness check so the async client's connection
     # pool is not seeded with connections tied to the setup event loop.
-    sync_client = Client(endpoint=validator_rpc_url, commitment=Processed)
+    sync_client = Client(endpoint=validator_rpc_url, commitment=Processed, timeout=TEST_RPC_TIMEOUT_SECS)
     deadline = time.time() + 15
     while time.time() < deadline:
         if sync_client.is_connected():

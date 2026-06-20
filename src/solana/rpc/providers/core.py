@@ -5,14 +5,15 @@ from __future__ import annotations
 import itertools
 import logging
 import os
-from typing import Any, Dict, Optional, Tuple, Type, TypeVar, Union, get_args, overload
+from typing import Any, Dict, Optional, TypeVar
 
 import httpx2
-from solders.rpc.requests import batch_to_json as batch_req_json
-from solders.rpc.responses import Resp, RPCError, RPCResult
-from solders.rpc.responses import batch_from_json as batch_resp_json
 
-from ..core import JsonRpcRequestBody, RPCException
+from ..core import (
+    JsonRpcRequestBody,
+    JsonRpcResponseParserType,
+    _decode_rpc_response,
+)
 from ..types import URI
 
 DEFAULT_TIMEOUT = 10
@@ -24,48 +25,7 @@ DEFAULT_TIMEOUT = 10
 DEFAULT_LIMITS = httpx2.Limits(max_connections=10, max_keepalive_connections=5)
 
 
-T = TypeVar("T", bound=RPCResult)
-# hacky solution for parsing batches of up to six
-_T1 = TypeVar("_T1", bound=RPCResult)
-_T2 = TypeVar("_T2", bound=RPCResult)
-_T3 = TypeVar("_T3", bound=RPCResult)
-_T4 = TypeVar("_T4", bound=RPCResult)
-_T5 = TypeVar("_T5", bound=RPCResult)
-
-_Tup = Tuple[Type[T]]
-_Tup1 = Tuple[Type[T], Type[_T1]]
-_Tup2 = Tuple[Type[T], Type[_T1], Type[_T2]]
-_Tup3 = Tuple[Type[T], Type[_T1], Type[_T2], Type[_T3]]
-_Tup4 = Tuple[Type[T], Type[_T1], Type[_T2], Type[_T3], Type[_T4]]
-_Tup5 = Tuple[Type[T], Type[_T1], Type[_T2], Type[_T3], Type[_T4], Type[_T5]]
-_Tuples = Union[_Tup, _Tup1, _Tup2, _Tup3, _Tup4, _Tup5]
-
-_RespTup = Tuple[Resp[T]]
-_RespTup1 = Tuple[Resp[T], Resp[_T1]]
-_RespTup2 = Tuple[Resp[T], Resp[_T1], Resp[_T2]]
-_RespTup3 = Tuple[Resp[T], Resp[_T1], Resp[_T2], Resp[_T3]]
-_RespTup4 = Tuple[Resp[T], Resp[_T1], Resp[_T2], Resp[_T3], Resp[_T4]]
-_RespTup5 = Tuple[Resp[T], Resp[_T1], Resp[_T2], Resp[_T3], Resp[_T4], Resp[_T5]]
-
-_BodiesTup = Tuple[JsonRpcRequestBody]
-_BodiesTup1 = Tuple[JsonRpcRequestBody, JsonRpcRequestBody]
-_BodiesTup2 = Tuple[JsonRpcRequestBody, JsonRpcRequestBody, JsonRpcRequestBody]
-_BodiesTup3 = Tuple[JsonRpcRequestBody, JsonRpcRequestBody, JsonRpcRequestBody, JsonRpcRequestBody]
-_BodiesTup4 = Tuple[
-    JsonRpcRequestBody,
-    JsonRpcRequestBody,
-    JsonRpcRequestBody,
-    JsonRpcRequestBody,
-    JsonRpcRequestBody,
-]
-_BodiesTup5 = Tuple[
-    JsonRpcRequestBody,
-    JsonRpcRequestBody,
-    JsonRpcRequestBody,
-    JsonRpcRequestBody,
-    JsonRpcRequestBody,
-    JsonRpcRequestBody,
-]
+T = TypeVar("T")
 
 
 def get_default_endpoint() -> URI:
@@ -100,82 +60,14 @@ class _HTTPProviderCore:  # pylint: disable=too-few-public-methods
         data = body.to_json()
         return {**common_kwargs, "content": data}
 
-    def _build_batch_request_kwargs(self, reqs: Tuple[JsonRpcRequestBody, ...]) -> Dict[str, Any]:
-        common_kwargs = self._build_common_request_kwargs()
-        data = batch_req_json(reqs)  # type: ignore[arg-type]
-        return {**common_kwargs, "content": data}
-
     def _before_request(self, body: JsonRpcRequestBody) -> Dict[str, Any]:
         return self._build_request_kwargs(body=body)
 
-    def _before_batch_request(self, reqs: Tuple[JsonRpcRequestBody, ...]) -> Dict[str, Any]:
-        return self._build_batch_request_kwargs(reqs)
 
-
-def _parse_raw(raw: str, parser: Type[T]) -> T:
-    parsed = parser.from_json(raw)  # type: ignore
-    if isinstance(parsed, get_args(RPCError)):
-        raise RPCException(parsed)
-    return parsed  # type: ignore
-
-
-@overload
-def _parse_raw_batch(raw: str, parsers: _Tup) -> _RespTup: ...
-
-
-@overload
-def _parse_raw_batch(raw: str, parsers: _Tup1) -> _RespTup1: ...
-
-
-@overload
-def _parse_raw_batch(raw: str, parsers: _Tup2) -> _RespTup2: ...
-
-
-@overload
-def _parse_raw_batch(raw: str, parsers: _Tup3) -> _RespTup3: ...
-
-
-@overload
-def _parse_raw_batch(raw: str, parsers: _Tup4) -> _RespTup4: ...
-
-
-@overload
-def _parse_raw_batch(raw: str, parsers: _Tup5) -> _RespTup5: ...
-
-
-def _parse_raw_batch(raw: str, parsers: _Tuples) -> Tuple[RPCResult, ...]:
-    return tuple(batch_resp_json(raw, parsers))
+def _parse_raw(raw: str, parser: JsonRpcResponseParserType[T]) -> T:
+    return _decode_rpc_response(raw, parser)
 
 
 def _after_request_unparsed(raw_response: httpx2.Response) -> str:
     raw_response.raise_for_status()
     return raw_response.text
-
-
-@overload
-def _after_batch_request(raw_response: httpx2.Response, parsers: _Tup) -> _RespTup: ...
-
-
-@overload
-def _after_batch_request(raw_response: httpx2.Response, parsers: _Tup1) -> _RespTup1: ...
-
-
-@overload
-def _after_batch_request(raw_response: httpx2.Response, parsers: _Tup2) -> _RespTup2: ...
-
-
-@overload
-def _after_batch_request(raw_response: httpx2.Response, parsers: _Tup3) -> _RespTup3: ...
-
-
-@overload
-def _after_batch_request(raw_response: httpx2.Response, parsers: _Tup4) -> _RespTup4: ...
-
-
-@overload
-def _after_batch_request(raw_response: httpx2.Response, parsers: _Tup5) -> _RespTup5: ...
-
-
-def _after_batch_request(raw_response: httpx2.Response, parsers: _Tuples) -> Tuple[RPCResult, ...]:
-    text = _after_request_unparsed(raw_response)
-    return _parse_raw_batch(text, parsers)  # type: ignore

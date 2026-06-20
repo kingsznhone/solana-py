@@ -119,7 +119,7 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
             >>> from solders.rpc.responses import GetRecentPrioritizationFeesResp
             >>> solana_client = Client("http://localhost:8899")
             >>> body = GetRecentPrioritizationFees()
-            >>> solana_client.make_custom_request(body, GetRecentPrioritizationFeesResp).value[0] # doctest: +SKIP
+            >>> solana_client.send_custom_request(body, GetRecentPrioritizationFeesResp).value[0] # doctest: +SKIP
             RpcPrioritizationFee(
                 RpcPrioritizationFee {
                     slot: 348125,
@@ -128,10 +128,19 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
             )
 
         Example (custom body):
-            >>> from custom_request import CustomRequestBody, GenericRPCResponse
+            >>> class CustomRequestBody:
+            ...     def __init__(self, method: str):
+            ...         self.method = method
+            ...
+            ...     def to_json(self) -> str:
+            ...         return '{"jsonrpc":"2.0","id":1,"method":"%s","params":[]}' % self.method
+            >>> class GenericRPCResponse:
+            ...     @classmethod
+            ...     def from_json(cls, raw: str):
+            ...         return raw
             >>> solana_client = Client("http://localhost:8899")
             >>> body = CustomRequestBody(method="getHealth")
-            >>> solana_client.make_custom_request(body, GenericRPCResponse).result # doctest: +SKIP
+            >>> solana_client.send_custom_request(body, GenericRPCResponse) # doctest: +SKIP
             'ok'
 
         Args:

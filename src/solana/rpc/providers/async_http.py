@@ -7,10 +7,10 @@ from typing import Dict, Optional, Tuple, Type, overload
 
 import httpx2
 from aiolimiter import AsyncLimiter
-from solders.rpc.requests import Body
 from solders.rpc.responses import RPCResult
 
 from ...exceptions import SolanaRpcException, handle_async_exceptions
+from ..core import JsonRpcRequestBody
 from .async_base import AsyncBaseProvider
 from .core import (
     DEFAULT_LIMITS,
@@ -69,20 +69,24 @@ class AsyncHTTPProvider(AsyncBaseProvider, _HTTPProviderCore):
                 limits=DEFAULT_LIMITS,
             )
         else:
-            self.session = httpx2.AsyncClient(timeout=timeout, proxy=proxy, limits=DEFAULT_LIMITS)
-        self._limiter: Optional[AsyncLimiter] = AsyncLimiter(rate_limit, time_period=1) if rate_limit > 0 else None
+            self.session = httpx2.AsyncClient(
+                timeout=timeout, proxy=proxy, limits=DEFAULT_LIMITS
+            )
+        self._limiter: Optional[AsyncLimiter] = (
+            AsyncLimiter(rate_limit, time_period=1) if rate_limit > 0 else None
+        )
 
     def __str__(self) -> str:
         """String definition for HTTPProvider."""
         return f"Async HTTP RPC connection {self.endpoint_uri}"
 
     @handle_async_exceptions(SolanaRpcException, httpx2.HTTPError)
-    async def make_request(self, body: Body, parser: Type[T]) -> T:
+    async def make_request(self, body: JsonRpcRequestBody, parser: Type[T]) -> T:
         """Make an async HTTP request to an http rpc endpoint."""
         raw = await self.make_request_unparsed(body)
         return _parse_raw(raw, parser=parser)
 
-    async def make_request_unparsed(self, body: Body) -> str:
+    async def make_request_unparsed(self, body: JsonRpcRequestBody) -> str:
         """Make an async HTTP request to an http rpc endpoint."""
         if self._limiter is not None:
             async with self._limiter:
@@ -102,7 +106,9 @@ class AsyncHTTPProvider(AsyncBaseProvider, _HTTPProviderCore):
             raw_response = await self.session.post(**request_kwargs)
         return _after_request_unparsed(raw_response)
 
-    async def make_batch_request_unparsed(self, reqs: Tuple[Body, ...]) -> str:
+    async def make_batch_request_unparsed(
+        self, reqs: Tuple[JsonRpcRequestBody, ...]
+    ) -> str:
         """Make an async HTTP batch request to an http rpc endpoint."""
         if self._limiter is not None:
             async with self._limiter:
@@ -123,21 +129,33 @@ class AsyncHTTPProvider(AsyncBaseProvider, _HTTPProviderCore):
     async def make_batch_request(self, reqs: _BodiesTup, parsers: _Tup) -> _RespTup: ...
 
     @overload
-    async def make_batch_request(self, reqs: _BodiesTup1, parsers: _Tup1) -> _RespTup1: ...
+    async def make_batch_request(
+        self, reqs: _BodiesTup1, parsers: _Tup1
+    ) -> _RespTup1: ...
 
     @overload
-    async def make_batch_request(self, reqs: _BodiesTup2, parsers: _Tup2) -> _RespTup2: ...
+    async def make_batch_request(
+        self, reqs: _BodiesTup2, parsers: _Tup2
+    ) -> _RespTup2: ...
 
     @overload
-    async def make_batch_request(self, reqs: _BodiesTup3, parsers: _Tup3) -> _RespTup3: ...
+    async def make_batch_request(
+        self, reqs: _BodiesTup3, parsers: _Tup3
+    ) -> _RespTup3: ...
 
     @overload
-    async def make_batch_request(self, reqs: _BodiesTup4, parsers: _Tup4) -> _RespTup4: ...
+    async def make_batch_request(
+        self, reqs: _BodiesTup4, parsers: _Tup4
+    ) -> _RespTup4: ...
 
     @overload
-    async def make_batch_request(self, reqs: _BodiesTup5, parsers: _Tup5) -> _RespTup5: ...
+    async def make_batch_request(
+        self, reqs: _BodiesTup5, parsers: _Tup5
+    ) -> _RespTup5: ...
 
-    async def make_batch_request(self, reqs: Tuple[Body, ...], parsers: _Tuples) -> Tuple[RPCResult, ...]:
+    async def make_batch_request(
+        self, reqs: Tuple[JsonRpcRequestBody, ...], parsers: _Tuples
+    ) -> Tuple[RPCResult, ...]:
         """Make an async HTTP batch request to an http rpc endpoint.
 
         .. deprecated::

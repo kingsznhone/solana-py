@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from time import sleep, time
-from typing import Dict, List, Optional, Sequence, Union
+from typing import Any, Dict, List, Optional, Sequence, Type, Union, get_args
 
 from solders.message import VersionedMessage
 from solders.pubkey import Pubkey
@@ -69,6 +69,8 @@ from solana.rpc import types
 
 from .commitment import Commitment
 from .core import (
+    JsonRpcRequestBody,
+    JsonRpcResponseParser,
     _COMMITMENT_TO_SOLDERS,
     RPCException,
     TransactionExpiredBlockheightExceededError,
@@ -100,6 +102,47 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
         """Init API client."""
         super().__init__(commitment)
         self._provider = http.HTTPProvider(endpoint, timeout=timeout, extra_headers=extra_headers, proxy=proxy)
+
+    def send_custom_request(self, body: JsonRpcRequestBody, parser: Type[JsonRpcResponseParser]) -> Any:
+        """Make a raw RPC request with a custom body and parser.
+
+        This allows calling any RPC method that is not yet supported by the client,
+        as long as the ``body`` object has a ``to_json()`` method and the
+        ``parser`` has a ``from_json(raw: str)`` classmethod.
+
+        The body can be:
+            - A solders request body from ``solders.rpc.requests`` (e.g. ``GetRecentPrioritizationFees``)
+            - A ``CustomRequestBody`` (see ``custom_request.py``)
+
+        Example (solders body):
+            >>> from solders.rpc.requests import GetRecentPrioritizationFees
+            >>> from solders.rpc.responses import GetRecentPrioritizationFeesResp
+            >>> solana_client = Client("http://localhost:8899")
+            >>> body = GetRecentPrioritizationFees()
+            >>> solana_client.make_custom_request(body, GetRecentPrioritizationFeesResp).value[0] # doctest: +SKIP
+            RpcPrioritizationFee(
+                RpcPrioritizationFee {
+                    slot: 348125,
+                    prioritization_fee: 1000,
+                },
+            )
+
+        Example (custom body):
+            >>> from custom_request import CustomRequestBody, GenericRPCResponse
+            >>> solana_client = Client("http://localhost:8899")
+            >>> body = CustomRequestBody(method="getHealth")
+            >>> solana_client.make_custom_request(body, GenericRPCResponse).result # doctest: +SKIP
+            'ok'
+
+        Args:
+            body: A request body object with a ``to_json()`` method
+                (e.g. from ``solders.rpc.requests`` or ``CustomRequestBody``).
+            parser: A response class with a ``from_json(raw: str)`` classmethod.
+
+        Returns:
+            The parsed response object.
+        """
+        return self._provider.make_request(body, parser)  # type: ignore[arg-type]
 
     def is_connected(self) -> bool:
         """Health check.
@@ -506,7 +549,10 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
         return self._provider.make_request(self._get_inflation_rate, GetInflationRateResp)
 
     def get_inflation_reward(
-        self, pubkeys: List[Pubkey], epoch: Optional[int] = None, commitment: Optional[Commitment] = None
+        self,
+        pubkeys: List[Pubkey],
+        epoch: Optional[int] = None,
+        commitment: Optional[Commitment] = None,
     ) -> GetInflationRewardResp:
         """Returns the inflation / staking reward for a list of addresses for an epoch.
 
@@ -1158,7 +1204,7 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
             current_blockheight = (self.get_block_height(commitment)).value
             while current_blockheight <= last_valid_block_height:
                 resp = self.get_signature_statuses([tx_sig])
-                if isinstance(resp, RPCError.__args__):  # type: ignore
+                if isinstance(resp, get_args(RPCError)):
                     raise RPCException(resp)
                 resp_value = resp.value[0]
                 if resp_value is not None:

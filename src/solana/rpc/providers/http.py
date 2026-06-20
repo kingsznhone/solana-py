@@ -6,10 +6,10 @@ import warnings
 from typing import Dict, Optional, Tuple, Type, overload
 
 import httpx2
-from solders.rpc.requests import Body
 from solders.rpc.responses import RPCResult
 
 from ...exceptions import SolanaRpcException, handle_exceptions
+from ..core import JsonRpcRequestBody
 from .base import BaseProvider
 from .core import (
     DEFAULT_LIMITS,
@@ -59,19 +59,21 @@ class HTTPProvider(BaseProvider, _HTTPProviderCore):
                 limits=DEFAULT_LIMITS,
             )
         else:
-            self.session = httpx2.Client(timeout=timeout, proxy=proxy, limits=DEFAULT_LIMITS)
+            self.session = httpx2.Client(
+                timeout=timeout, proxy=proxy, limits=DEFAULT_LIMITS
+            )
 
     def __str__(self) -> str:
         """String definition for HTTPProvider."""
         return f"HTTP RPC connection {self.endpoint_uri}"
 
     @handle_exceptions(SolanaRpcException, httpx2.HTTPError)
-    def make_request(self, body: Body, parser: Type[T]) -> T:
+    def make_request(self, body: JsonRpcRequestBody, parser: Type[T]) -> T:
         """Make an HTTP request to an http rpc endpoint."""
         raw = self.make_request_unparsed(body)
         return _parse_raw(raw, parser=parser)
 
-    def make_request_unparsed(self, body: Body) -> str:
+    def make_request_unparsed(self, body: JsonRpcRequestBody) -> str:
         """Make an HTTP request to an http rpc endpoint."""
         request_kwargs = self._before_request(body=body)
         try:
@@ -83,7 +85,7 @@ class HTTPProvider(BaseProvider, _HTTPProviderCore):
             raw_response = self.session.post(**request_kwargs)
         return _after_request_unparsed(raw_response)
 
-    def make_batch_request_unparsed(self, reqs: Tuple[Body, ...]) -> str:
+    def make_batch_request_unparsed(self, reqs: Tuple[JsonRpcRequestBody, ...]) -> str:
         """Make an HTTP batch request to an http rpc endpoint."""
         request_kwargs = self._before_batch_request(reqs)
         try:
@@ -110,7 +112,9 @@ class HTTPProvider(BaseProvider, _HTTPProviderCore):
     @overload
     def make_batch_request(self, reqs: _BodiesTup5, parsers: _Tup5) -> _RespTup5: ...
 
-    def make_batch_request(self, reqs: Tuple[Body, ...], parsers: _Tuples) -> Tuple[RPCResult, ...]:
+    def make_batch_request(
+        self, reqs: Tuple[JsonRpcRequestBody, ...], parsers: _Tuples
+    ) -> Tuple[RPCResult, ...]:
         """Make a HTTP batch request to an http rpc endpoint.
 
         .. deprecated::

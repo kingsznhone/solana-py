@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from time import time
-from typing import Dict, List, Optional, Sequence, Union
+from typing import Any, Dict, List, Optional, Sequence, Type, Union
 
 from solders.message import VersionedMessage
 from solders.pubkey import Pubkey
@@ -65,10 +65,13 @@ from solders.rpc.responses import (
 from solders.signature import Signature
 from solders.transaction import Transaction, VersionedTransaction
 
+
 from solana.rpc import types
 
 from .commitment import Commitment
 from .core import (
+    JsonRpcRequestBody,
+    JsonRpcResponseParser,
     _COMMITMENT_TO_SOLDERS,
     TransactionExpiredBlockheightExceededError,
     UnconfirmedTxError,
@@ -120,6 +123,27 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
     async def close(self) -> None:
         """Use this when you are done with the client."""
         await self._provider.close()
+
+    async def send_custom_request(self, body: JsonRpcRequestBody, parser: Type[JsonRpcResponseParser]) -> Any:
+        """Make a raw RPC request with a custom body and parser.
+
+        This allows calling any RPC method that is not yet supported by the client,
+        as long as the ``body`` object has a ``to_json()`` method and the
+        ``parser`` has a ``from_json(raw: str)`` classmethod.
+
+        The body can be:
+            - A solders request body from ``solders.rpc.requests`` (e.g. ``GetRecentPrioritizationFees``)
+            - A ``CustomRequestBody`` (see ``custom_request.py``)
+
+        Args:
+            body: A request body object with a ``to_json()`` method
+                (e.g. from ``solders.rpc.requests`` or ``CustomRequestBody``).
+            parser: A response class with a ``from_json(raw: str)`` classmethod.
+
+        Returns:
+            The parsed response object.
+        """
+        return await self._provider.make_request(body, parser)  # type: ignore[arg-type]
 
     async def is_connected(self) -> bool:
         """Health check.

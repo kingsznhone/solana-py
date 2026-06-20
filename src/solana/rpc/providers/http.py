@@ -35,9 +35,7 @@ class HTTPProvider(BaseProvider, _HTTPProviderCore):
                 limits=DEFAULT_LIMITS,
             )
         else:
-            self.session = httpx2.Client(
-                timeout=timeout, proxy=proxy, limits=DEFAULT_LIMITS
-            )
+            self.session = httpx2.Client(timeout=timeout, proxy=proxy, limits=DEFAULT_LIMITS)
 
     def __str__(self) -> str:
         """String definition for HTTPProvider."""

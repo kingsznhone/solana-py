@@ -45,12 +45,8 @@ class AsyncHTTPProvider(AsyncBaseProvider, _HTTPProviderCore):
                 limits=DEFAULT_LIMITS,
             )
         else:
-            self.session = httpx2.AsyncClient(
-                timeout=timeout, proxy=proxy, limits=DEFAULT_LIMITS
-            )
-        self._limiter: Optional[AsyncLimiter] = (
-            AsyncLimiter(rate_limit, time_period=1) if rate_limit > 0 else None
-        )
+            self.session = httpx2.AsyncClient(timeout=timeout, proxy=proxy, limits=DEFAULT_LIMITS)
+        self._limiter: Optional[AsyncLimiter] = AsyncLimiter(rate_limit, time_period=1) if rate_limit > 0 else None
 
     def __str__(self) -> str:
         """String definition for HTTPProvider."""

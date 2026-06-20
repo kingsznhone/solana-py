@@ -7,15 +7,13 @@ from typing import Dict, Optional
 import httpx2
 
 from ...exceptions import SolanaRpcException, handle_exceptions
-from ..core import JsonRPCRequestSerializer, JsonRPCResponseParserType
+from ..core import JsonRPCRequestSerializer
 from .base import BaseProvider
 from .core import (
     DEFAULT_LIMITS,
     DEFAULT_TIMEOUT,
-    T,
     _after_request_unparsed,
     _HTTPProviderCore,
-    _parse_raw,
 )
 
 
@@ -37,21 +35,17 @@ class HTTPProvider(BaseProvider, _HTTPProviderCore):
                 limits=DEFAULT_LIMITS,
             )
         else:
-            self.session = httpx2.Client(timeout=timeout, proxy=proxy, limits=DEFAULT_LIMITS)
+            self.session = httpx2.Client(
+                timeout=timeout, proxy=proxy, limits=DEFAULT_LIMITS
+            )
 
     def __str__(self) -> str:
         """String definition for HTTPProvider."""
         return f"HTTP RPC connection {self.endpoint_uri}"
 
     @handle_exceptions(SolanaRpcException, httpx2.HTTPError)
-    def make_request(self, body: JsonRPCRequestSerializer, parser: JsonRPCResponseParserType[T]) -> T:
-        """Make an HTTP request to an http rpc endpoint."""
-        raw = self.make_request_unparsed(body)
-        return _parse_raw(raw, parser=parser)
-
-    @handle_exceptions(SolanaRpcException, httpx2.HTTPError)
-    def make_request_unparsed(self, body: JsonRPCRequestSerializer) -> str:
-        """Make an HTTP request to an http rpc endpoint."""
+    def send(self, body: JsonRPCRequestSerializer) -> str:
+        """Send a JSON-RPC request and return the raw response string."""
         request_kwargs = self._before_request(body=body)
         try:
             raw_response = self.session.post(**request_kwargs)

@@ -5,15 +5,11 @@ from __future__ import annotations
 import itertools
 import logging
 import os
-from typing import Any, Dict, Optional, TypeVar
+from typing import Any, Dict, Optional
 
 import httpx2
 
-from ..core import (
-    JsonRPCRequestSerializer,
-    JsonRPCResponseParserType,
-    _decode_rpc_response,
-)
+from ..core import JsonRPCRequestSerializer
 from ..types import URI
 
 DEFAULT_TIMEOUT = 10
@@ -23,9 +19,6 @@ DEFAULT_TIMEOUT = 10
 # We keep the pool small (single-endpoint RPC client) but leave keepalive_expiry at the
 # httpx2 default so long-running clients don't reconnect unnecessarily.
 DEFAULT_LIMITS = httpx2.Limits(max_connections=10, max_keepalive_connections=5)
-
-
-T = TypeVar("T")
 
 
 def get_default_endpoint() -> URI:
@@ -62,10 +55,6 @@ class _HTTPProviderCore:  # pylint: disable=too-few-public-methods
 
     def _before_request(self, body: JsonRPCRequestSerializer) -> Dict[str, Any]:
         return self._build_request_kwargs(body=body)
-
-
-def _parse_raw(raw: str, parser: JsonRPCResponseParserType[T]) -> T:
-    return _decode_rpc_response(raw, parser)
 
 
 def _after_request_unparsed(raw_response: httpx2.Response) -> str:

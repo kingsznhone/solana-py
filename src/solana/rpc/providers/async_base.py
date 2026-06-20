@@ -1,20 +1,14 @@
 """Async base RPC Provider."""
 
 from collections.abc import Coroutine
-from typing import Any, TypeVar
+from typing import Any
 
-from ..core import JsonRPCRequestSerializer, JsonRPCResponseParserType
-
-T = TypeVar("T")
+from ..core import JsonRPCRequestSerializer
 
 
 class AsyncBaseProvider:
     """Base class for async RPC providers to implement."""
 
-    def make_request(
-        self,
-        body: JsonRPCRequestSerializer,
-        parser: JsonRPCResponseParserType[T],
-    ) -> Coroutine[Any, Any, T]:
-        """Make a request to the rpc endpoint."""
+    def send(self, body: JsonRPCRequestSerializer) -> Coroutine[Any, Any, str]:
+        """Send a JSON-RPC request body and return the raw response string."""
         raise NotImplementedError("Providers must implement this method")

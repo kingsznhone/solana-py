@@ -127,6 +127,15 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
         """Use this when you are done with the client."""
         await self._provider.close()
 
+    async def _make_request(
+        self,
+        body: JsonRPCRequestSerializer,
+        parser: JsonRPCResponseParserType[_ParsedT],
+    ) -> _ParsedT:
+        """Send a JSON-RPC request and decode the response."""
+        raw = await self._provider.send(body)
+        return _decode_rpc_response(raw, parser)
+
     async def send_custom_request(
         self,
         body: JsonRPCRequestSerializer,
@@ -151,8 +160,7 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
         Returns:
             The parsed response object.
         """
-        raw = await self._provider.make_request_unparsed(body)
-        return _decode_rpc_response(raw, parser)
+        return await self._make_request(body, parser)
 
     async def is_connected(self) -> bool:
         """Health check.
@@ -165,10 +173,12 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
             True if the client is connected.
         """
         body = self._get_health_body()
-        response = await self._provider.make_request(body, GetHealthResp)
+        response = await self._make_request(body, GetHealthResp)
         return response.value == "ok"
 
-    async def get_balance(self, pubkey: Pubkey, commitment: Optional[Commitment] = None) -> GetBalanceResp:
+    async def get_balance(
+        self, pubkey: Pubkey, commitment: Optional[Commitment] = None
+    ) -> GetBalanceResp:
         """Returns the balance of the account of provided Pubkey.
 
         Args:
@@ -182,7 +192,7 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
             0
         """
         body = self._get_balance_body(pubkey, commitment)
-        return await self._provider.make_request(body, GetBalanceResp)
+        return await self._make_request(body, GetBalanceResp)
 
     async def get_account_info(
         self,
@@ -228,7 +238,7 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
             encoding=encoding,
             data_slice=data_slice,
         )
-        return await self._provider.make_request(body, GetAccountInfoResp)
+        return await self._make_request(body, GetAccountInfoResp)
 
     async def get_account_info_json_parsed(
         self,
@@ -251,8 +261,10 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
                 11111111111111111111111111111111,
             )
         """
-        body = self._get_account_info_body(pubkey=pubkey, commitment=commitment, encoding="jsonParsed", data_slice=None)
-        return await self._provider.make_request(body, GetAccountInfoMaybeJsonParsedResp)
+        body = self._get_account_info_body(
+            pubkey=pubkey, commitment=commitment, encoding="jsonParsed", data_slice=None
+        )
+        return await self._make_request(body, GetAccountInfoMaybeJsonParsedResp)
 
     async def get_block_commitment(self, slot: int) -> GetBlockCommitmentResp:
         """Fetch the commitment for particular block.
@@ -266,7 +278,7 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
             497717120
         """
         body = self._get_block_commitment_body(slot)
-        return await self._provider.make_request(body, GetBlockCommitmentResp)
+        return await self._make_request(body, GetBlockCommitmentResp)
 
     async def get_block_time(self, slot: int) -> GetBlockTimeResp:
         """Fetch the estimated production time of a block.
@@ -280,7 +292,7 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
             1598400007
         """
         body = self._get_block_time_body(slot)
-        return await self._provider.make_request(body, GetBlockTimeResp)
+        return await self._make_request(body, GetBlockTimeResp)
 
     async def get_cluster_nodes(self) -> GetClusterNodesResp:
         """Returns information about all the nodes participating in the cluster.
@@ -290,7 +302,7 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
             >>> (await solana_client.get_cluster_nodes()).value[0].tpu # doctest: +SKIP
             '139.178.65.155:8004'
         """
-        return await self._provider.make_request(self._get_cluster_nodes, GetClusterNodesResp)
+        return await self._make_request(self._get_cluster_nodes, GetClusterNodesResp)
 
     async def get_block(
         self,
@@ -315,9 +327,11 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
             )
         """
         body = self._get_block_body(slot, encoding, max_supported_transaction_version)
-        return await self._provider.make_request(body, GetBlockResp)
+        return await self._make_request(body, GetBlockResp)
 
-    async def get_recent_performance_samples(self, limit: Optional[int] = None) -> GetRecentPerformanceSamplesResp:
+    async def get_recent_performance_samples(
+        self, limit: Optional[int] = None
+    ) -> GetRecentPerformanceSamplesResp:
         """Returns a list of recent performance samples, in reverse slot order.
 
         Performance samples are taken every 60 seconds and include the number of transactions and slots that occur in a given time window.
@@ -338,7 +352,7 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
             )
         """  # noqa: E501 # pylint: disable=line-too-long
         body = self._get_recent_performance_samples_body(limit)
-        return await self._provider.make_request(body, GetRecentPerformanceSamplesResp)
+        return await self._make_request(body, GetRecentPerformanceSamplesResp)
 
     async def get_recent_prioritization_fees(
         self, addresses: Optional[Sequence[Pubkey]] = None
@@ -360,9 +374,11 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
             )
         """
         body = GetRecentPrioritizationFees(addresses)
-        return await self._provider.make_request(body, GetRecentPrioritizationFeesResp)
+        return await self._make_request(body, GetRecentPrioritizationFeesResp)
 
-    async def get_block_height(self, commitment: Optional[Commitment] = None) -> GetBlockHeightResp:
+    async def get_block_height(
+        self, commitment: Optional[Commitment] = None
+    ) -> GetBlockHeightResp:
         """Returns the current block height of the node.
 
         Args:
@@ -374,9 +390,11 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
             1233
         """
         body = self._get_block_height_body(commitment)
-        return await self._provider.make_request(body, GetBlockHeightResp)
+        return await self._make_request(body, GetBlockHeightResp)
 
-    async def get_blocks(self, start_slot: int, end_slot: Optional[int] = None) -> GetBlocksResp:
+    async def get_blocks(
+        self, start_slot: int, end_slot: Optional[int] = None
+    ) -> GetBlocksResp:
         """Returns a list of confirmed blocks.
 
         Args:
@@ -389,7 +407,7 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
             [5, 6, 7, 8, 9, 10]
         """
         body = self._get_blocks_body(start_slot, end_slot)
-        return await self._provider.make_request(body, GetBlocksResp)
+        return await self._make_request(body, GetBlocksResp)
 
     async def get_signatures_for_address(
         self,
@@ -423,8 +441,10 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
                 1111111111111111111111111111111111111111111111111111111111111111,
             )
         """
-        body = self._get_signatures_for_address_body(account, before, until, limit, commitment, min_context_slot)
-        return await self._provider.make_request(body, GetSignaturesForAddressResp)
+        body = self._get_signatures_for_address_body(
+            account, before, until, limit, commitment, min_context_slot
+        )
+        return await self._make_request(body, GetSignaturesForAddressResp)
 
     async def get_transaction(
         self,
@@ -452,10 +472,14 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
             >>> (await solana_client.get_transaction(sig)).value.block_time # doctest: +SKIP
             1234
         """  # noqa: E501 # pylint: disable=line-too-long
-        body = self._get_transaction_body(tx_sig, encoding, commitment, max_supported_transaction_version)
-        return await self._provider.make_request(body, GetTransactionResp)
+        body = self._get_transaction_body(
+            tx_sig, encoding, commitment, max_supported_transaction_version
+        )
+        return await self._make_request(body, GetTransactionResp)
 
-    async def get_epoch_info(self, commitment: Optional[Commitment] = None) -> GetEpochInfoResp:
+    async def get_epoch_info(
+        self, commitment: Optional[Commitment] = None
+    ) -> GetEpochInfoResp:
         """Returns information about the current epoch.
 
         Args:
@@ -467,7 +491,7 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
             0
         """
         body = self._get_epoch_info_body(commitment)
-        return await self._provider.make_request(body, GetEpochInfoResp)
+        return await self._make_request(body, GetEpochInfoResp)
 
     async def get_epoch_schedule(self) -> GetEpochScheduleResp:
         """Returns epoch schedule information from this cluster's genesis config.
@@ -477,7 +501,7 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
             >>> (await solana_client.get_epoch_schedule()).value.slots_per_epoch # doctest: +SKIP
             8192
         """
-        return await self._provider.make_request(self._get_epoch_schedule, GetEpochScheduleResp)
+        return await self._make_request(self._get_epoch_schedule, GetEpochScheduleResp)
 
     async def get_fee_for_message(
         self, message: VersionedMessage, commitment: Optional[Commitment] = None
@@ -501,7 +525,7 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
             5000
         """
         body = self._get_fee_for_message_body(message, commitment)
-        return await self._provider.make_request(body, GetFeeForMessageResp)
+        return await self._make_request(body, GetFeeForMessageResp)
 
     async def get_first_available_block(self) -> GetFirstAvailableBlockResp:
         """Returns the slot of the lowest confirmed block that has not been purged from the ledger.
@@ -511,7 +535,9 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
             >>> (await solana_client.get_first_available_block()).value # doctest: +SKIP
             1
         """
-        return await self._provider.make_request(self._get_first_available_block, GetFirstAvailableBlockResp)
+        return await self._make_request(
+            self._get_first_available_block, GetFirstAvailableBlockResp
+        )
 
     async def get_genesis_hash(self) -> GetGenesisHashResp:
         """Returns the genesis hash.
@@ -523,7 +549,7 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
                 EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG,
             )
         """
-        return await self._provider.make_request(self._get_genesis_hash, GetGenesisHashResp)
+        return await self._make_request(self._get_genesis_hash, GetGenesisHashResp)
 
     async def get_identity(self) -> GetIdentityResp:
         """Returns the identity pubkey for the current node.
@@ -535,9 +561,11 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
                 2LVtX3Wq5bhqAYYaUYBRknWaYrsfYiXLQBHTxtHWD2mv,
             )
         """
-        return await self._provider.make_request(self._get_identity, GetIdentityResp)
+        return await self._make_request(self._get_identity, GetIdentityResp)
 
-    async def get_inflation_governor(self, commitment: Optional[Commitment] = None) -> GetInflationGovernorResp:
+    async def get_inflation_governor(
+        self, commitment: Optional[Commitment] = None
+    ) -> GetInflationGovernorResp:
         """Returns the current inflation governor.
 
         Args:
@@ -549,7 +577,7 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
             0.05
         """
         body = self._get_inflation_governor_body(commitment)
-        return await self._provider.make_request(body, GetInflationGovernorResp)
+        return await self._make_request(body, GetInflationGovernorResp)
 
     async def get_inflation_rate(self) -> GetInflationRateResp:
         """Returns the specific inflation values for the current epoch.
@@ -559,7 +587,7 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
             >>> (await solana_client.get_inflation_rate()).value.epoch # doctest: +SKIP
             1
         """
-        return await self._provider.make_request(self._get_inflation_rate, GetInflationRateResp)
+        return await self._make_request(self._get_inflation_rate, GetInflationRateResp)
 
     async def get_inflation_reward(
         self,
@@ -580,7 +608,7 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
             2500
         """
         body = self._get_inflation_reward_body(pubkeys, epoch, commitment)
-        return await self._provider.make_request(body, GetInflationRewardResp)
+        return await self._make_request(body, GetInflationRewardResp)
 
     async def get_largest_accounts(
         self, filter_opt: Optional[str] = None, commitment: Optional[Commitment] = None
@@ -597,7 +625,7 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
             500000000000000000
         """
         body = self._get_largest_accounts_body(filter_opt, commitment)
-        return await self._provider.make_request(body, GetLargestAccountsResp)
+        return await self._make_request(body, GetLargestAccountsResp)
 
     async def get_leader_schedule(
         self, epoch: Optional[int] = None, commitment: Optional[Commitment] = None
@@ -618,9 +646,11 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
             ), [346448, 346449, 346450, 346451, 369140, 369141, 369142, 369143, 384204, 384205, 384206, 384207])
         """
         body = self._get_leader_schedule_body(epoch, commitment)
-        return await self._provider.make_request(
+        return await self._make_request(
             body,
-            cast(JsonRPCResponseParserType[GetLeaderScheduleResp], GetLeaderScheduleResp),
+            cast(
+                JsonRPCResponseParserType[GetLeaderScheduleResp], GetLeaderScheduleResp
+            ),
         )
 
     async def get_minimum_balance_for_rent_exemption(
@@ -638,7 +668,7 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
             1238880
         """
         body = self._get_minimum_balance_for_rent_exemption_body(usize, commitment)
-        return await self._provider.make_request(body, GetMinimumBalanceForRentExemptionResp)
+        return await self._make_request(body, GetMinimumBalanceForRentExemptionResp)
 
     async def get_multiple_accounts(
         self,
@@ -673,7 +703,7 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
             encoding=encoding,
             data_slice=data_slice,
         )
-        return await self._provider.make_request(
+        return await self._make_request(
             body,
             cast(
                 JsonRPCResponseParserType[GetMultipleAccountsResp],
@@ -705,7 +735,7 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
             encoding="jsonParsed",
             data_slice=None,
         )
-        return await self._provider.make_request(body, GetMultipleAccountsMaybeJsonParsedResp)
+        return await self._make_request(body, GetMultipleAccountsMaybeJsonParsedResp)
 
     async def get_program_accounts(  # pylint: disable=too-many-arguments
         self,
@@ -743,7 +773,7 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
             data_slice=data_slice,
             filters=filters,
         )
-        return await self._provider.make_request(body, GetProgramAccountsResp)
+        return await self._make_request(body, GetProgramAccountsResp)
 
     async def get_program_accounts_json_parsed(  # pylint: disable=too-many-arguments
         self,
@@ -775,9 +805,11 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
             data_slice=None,
             filters=filters,
         )
-        return await self._provider.make_request(body, GetProgramAccountsMaybeJsonParsedResp)
+        return await self._make_request(body, GetProgramAccountsMaybeJsonParsedResp)
 
-    async def get_latest_blockhash(self, commitment: Optional[Commitment] = None) -> GetLatestBlockhashResp:
+    async def get_latest_blockhash(
+        self, commitment: Optional[Commitment] = None
+    ) -> GetLatestBlockhashResp:
         """Returns the latest block hash from the ledger.
 
         Response also includes the last valid block height.
@@ -796,7 +828,7 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
             }
         """
         body = self._get_latest_blockhash_body(commitment)
-        return await self._provider.make_request(body, GetLatestBlockhashResp)
+        return await self._make_request(body, GetLatestBlockhashResp)
 
     async def get_signature_statuses(
         self, signatures: List[Signature], search_transaction_history: bool = False
@@ -822,7 +854,7 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
             10
         """
         body = self._get_signature_statuses_body(signatures, search_transaction_history)
-        return await self._provider.make_request(body, GetSignatureStatusesResp)
+        return await self._make_request(body, GetSignatureStatusesResp)
 
     async def get_slot(self, commitment: Optional[Commitment] = None) -> GetSlotResp:
         """Returns the current slot the node is processing.
@@ -836,9 +868,11 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
             7515
         """
         body = self._get_slot_body(commitment)
-        return await self._provider.make_request(body, GetSlotResp)
+        return await self._make_request(body, GetSlotResp)
 
-    async def get_slot_leader(self, commitment: Optional[Commitment] = None) -> GetSlotLeaderResp:
+    async def get_slot_leader(
+        self, commitment: Optional[Commitment] = None
+    ) -> GetSlotLeaderResp:
         """Returns the current slot leader.
 
         Args:
@@ -852,7 +886,7 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
             )
         """
         body = self._get_slot_leader_body(commitment)
-        return await self._provider.make_request(body, GetSlotLeaderResp)
+        return await self._make_request(body, GetSlotLeaderResp)
 
     async def get_slot_leaders(self, start: int, limit: int) -> GetSlotLeadersResp:
         """Returns the list of slot leaders for the provided start slot and limit.
@@ -865,9 +899,11 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
             A list of slot leaders.
         """
         body = self._get_slot_leaders_body(start, limit)
-        return await self._provider.make_request(body, GetSlotLeadersResp)
+        return await self._make_request(body, GetSlotLeadersResp)
 
-    async def get_supply(self, commitment: Optional[Commitment] = None) -> GetSupplyResp:
+    async def get_supply(
+        self, commitment: Optional[Commitment] = None
+    ) -> GetSupplyResp:
         """Returns information about the current supply.
 
         Args:
@@ -879,7 +915,7 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
             683635192454157660
         """
         body = self._get_supply_body(commitment)
-        return await self._provider.make_request(body, GetSupplyResp)
+        return await self._make_request(body, GetSupplyResp)
 
     async def get_token_account_balance(
         self, pubkey: Pubkey, commitment: Optional[Commitment] = None
@@ -897,7 +933,7 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
             '9864'
         """
         body = self._get_token_account_balance_body(pubkey, commitment)
-        return await self._provider.make_request(body, GetTokenAccountBalanceResp)
+        return await self._make_request(body, GetTokenAccountBalanceResp)
 
     async def get_token_accounts_by_delegate(
         self,
@@ -913,7 +949,7 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
             commitment: Bank state to query. It can be either "finalized", "confirmed" or "processed".
         """
         body = self._get_token_accounts_by_delegate_body(delegate, opts, commitment)
-        return await self._provider.make_request(body, GetTokenAccountsByDelegateResp)
+        return await self._make_request(body, GetTokenAccountsByDelegateResp)
 
     async def get_token_accounts_by_delegate_json_parsed(
         self,
@@ -928,8 +964,10 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
             opts: Token account option specifying at least one of `mint` or `program_id`.
             commitment: Bank state to query. It can be either "finalized", "confirmed" or "processed".
         """
-        body = self._get_token_accounts_by_delegate_json_parsed_body(delegate, opts, commitment)
-        return await self._provider.make_request(body, GetTokenAccountsByDelegateJsonParsedResp)
+        body = self._get_token_accounts_by_delegate_json_parsed_body(
+            delegate, opts, commitment
+        )
+        return await self._make_request(body, GetTokenAccountsByDelegateJsonParsedResp)
 
     async def get_token_accounts_by_owner_json_parsed(
         self,
@@ -944,8 +982,10 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
             opts: Token account option specifying at least one of `mint` or `program_id`.
             commitment: Bank state to query. It can be either "finalized", "confirmed" or "processed".
         """
-        body = self._get_token_accounts_by_owner_json_parsed_body(owner, opts, commitment)
-        return await self._provider.make_request(body, GetTokenAccountsByOwnerJsonParsedResp)
+        body = self._get_token_accounts_by_owner_json_parsed_body(
+            owner, opts, commitment
+        )
+        return await self._make_request(body, GetTokenAccountsByOwnerJsonParsedResp)
 
     async def get_token_accounts_by_owner(
         self,
@@ -961,21 +1001,25 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
             commitment: Bank state to query. It can be either "finalized", "confirmed" or "processed".
         """
         body = self._get_token_accounts_by_owner_body(owner, opts, commitment)
-        return await self._provider.make_request(body, GetTokenAccountsByOwnerResp)
+        return await self._make_request(body, GetTokenAccountsByOwnerResp)
 
     async def get_token_largest_accounts(
         self, pubkey: Pubkey, commitment: Optional[Commitment] = None
     ) -> GetTokenLargestAccountsResp:
         """Returns the 20 largest accounts of a particular SPL Token type."""
         body = self._get_token_largest_accounts_body(pubkey, commitment)
-        return await self._provider.make_request(body, GetTokenLargestAccountsResp)
+        return await self._make_request(body, GetTokenLargestAccountsResp)
 
-    async def get_token_supply(self, pubkey: Pubkey, commitment: Optional[Commitment] = None) -> GetTokenSupplyResp:
+    async def get_token_supply(
+        self, pubkey: Pubkey, commitment: Optional[Commitment] = None
+    ) -> GetTokenSupplyResp:
         """Returns the total supply of an SPL Token type."""
         body = self._get_token_supply_body(pubkey, commitment)
-        return await self._provider.make_request(body, GetTokenSupplyResp)
+        return await self._make_request(body, GetTokenSupplyResp)
 
-    async def get_transaction_count(self, commitment: Optional[Commitment] = None) -> GetTransactionCountResp:
+    async def get_transaction_count(
+        self, commitment: Optional[Commitment] = None
+    ) -> GetTransactionCountResp:
         """Returns the current Transaction count from the ledger.
 
         Args:
@@ -987,7 +1031,7 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
             4554
         """
         body = self._get_transaction_count_body(commitment)
-        return await self._provider.make_request(body, GetTransactionCountResp)
+        return await self._make_request(body, GetTransactionCountResp)
 
     async def get_minimum_ledger_slot(self) -> MinimumLedgerSlotResp:
         """Returns the lowest slot that the node has information about in its ledger.
@@ -999,7 +1043,9 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
             >>> (await solana_client.get_minimum_ledger_slot()).value # doctest: +SKIP
             1234
         """
-        return await self._provider.make_request(self._minimum_ledger_slot, MinimumLedgerSlotResp)
+        return await self._make_request(
+            self._minimum_ledger_slot, MinimumLedgerSlotResp
+        )
 
     async def get_version(self) -> GetVersionResp:
         """Returns the current solana versions running on the node.
@@ -1009,7 +1055,7 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
             >>> (await solana_client.get_version()).value.solana_core # doctest: +SKIP
             '1.13.2'
         """
-        return await self._provider.make_request(self._get_version, GetVersionResp)
+        return await self._make_request(self._get_version, GetVersionResp)
 
     async def get_vote_accounts(
         self,
@@ -1035,7 +1081,7 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
         body = self._get_vote_accounts_body(
             vote_pubkey, commitment, keep_unstaked_delinquents, delinquent_slot_distance
         )
-        return await self._provider.make_request(body, GetVoteAccountsResp)
+        return await self._make_request(body, GetVoteAccountsResp)
 
     async def request_airdrop(
         self, pubkey: Pubkey, lamports: int, commitment: Optional[Commitment] = None
@@ -1056,9 +1102,11 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
             )
         """
         body = self._request_airdrop_body(pubkey, lamports, commitment)
-        return await self._provider.make_request(body, RequestAirdropResp)
+        return await self._make_request(body, RequestAirdropResp)
 
-    async def send_raw_transaction(self, txn: bytes, opts: Optional[types.TxOpts] = None) -> SendTransactionResp:
+    async def send_raw_transaction(
+        self, txn: bytes, opts: Optional[types.TxOpts] = None
+    ) -> SendTransactionResp:
         """Send a transaction that has already been signed and serialized into the wire format.
 
         Args:
@@ -1087,10 +1135,14 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
                 1111111111111111111111111111111111111111111111111111111111111111,
             )
         """  # noqa: E501 # pylint: disable=line-too-long
-        opts_to_use = types.TxOpts(preflight_commitment=self._commitment) if opts is None else opts
+        opts_to_use = (
+            types.TxOpts(preflight_commitment=self._commitment)
+            if opts is None
+            else opts
+        )
         body = self._send_raw_transaction_body(txn, opts_to_use)
 
-        resp = await self._provider.make_request(body, SendTransactionResp)
+        resp = await self._make_request(body, SendTransactionResp)
         if opts_to_use.skip_confirmation:
             return self._post_send(resp)
         post_send_args = self._send_raw_transaction_post_send_args(resp, opts_to_use)
@@ -1176,7 +1228,7 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
             accounts_addresses,
             accounts_encoding,
         )
-        return await self._provider.make_request(body, SimulateTransactionResp)
+        return await self._make_request(body, SimulateTransactionResp)
 
     async def validator_exit(self) -> ValidatorExitResp:
         """Request to have the validator exit.
@@ -1188,7 +1240,7 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
             >>> (await solana_client.validator_exit()).value # doctest: +SKIP
             True
         """
-        return await self._provider.make_request(self._validator_exit, ValidatorExitResp)  # type: ignore
+        return await self._make_request(self._validator_exit, ValidatorExitResp)  # type: ignore
 
     async def __post_send_with_confirm(
         self,
@@ -1198,8 +1250,12 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
     ) -> SendTransactionResp:
         resp = self._post_send(resp)
         sig = resp.value
-        self._provider.logger.info("Transaction sent to %s. Signature %s: ", self._provider.endpoint_uri, sig)
-        await self.confirm_transaction(sig, conf_comm, last_valid_block_height=last_valid_block_height)
+        self._provider.logger.info(
+            "Transaction sent to %s. Signature %s: ", self._provider.endpoint_uri, sig
+        )
+        await self.confirm_transaction(
+            sig, conf_comm, last_valid_block_height=last_valid_block_height
+        )
         return resp
 
     async def confirm_transaction(
@@ -1233,7 +1289,9 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
                 current_blockheight = (await self.get_block_height(commitment)).value
                 await asyncio.sleep(sleep_seconds)
             else:
-                raise TransactionExpiredBlockheightExceededError(f"{tx_sig} has expired: block height exceeded")
+                raise TransactionExpiredBlockheightExceededError(
+                    f"{tx_sig} has expired: block height exceeded"
+                )
             return resp
         else:
             timeout = time() + 90

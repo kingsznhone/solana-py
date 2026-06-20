@@ -113,7 +113,18 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
     ):
         """Init API client."""
         super().__init__(commitment)
-        self._provider = http.HTTPProvider(endpoint, timeout=timeout, extra_headers=extra_headers, proxy=proxy)
+        self._provider = http.HTTPProvider(
+            endpoint, timeout=timeout, extra_headers=extra_headers, proxy=proxy
+        )
+
+    def _make_request(
+        self,
+        body: JsonRPCRequestSerializer,
+        parser: JsonRPCResponseParserType[_ParsedT],
+    ) -> _ParsedT:
+        """Send a JSON-RPC request and decode the response."""
+        raw = self._provider.send(body)
+        return _decode_rpc_response(raw, parser)
 
     def send_custom_request(
         self,
@@ -168,8 +179,7 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
         Returns:
             The parsed response object.
         """
-        raw = self._provider.make_request_unparsed(body)
-        return _decode_rpc_response(raw, parser)
+        return self._make_request(body, parser)
 
     def is_connected(self) -> bool:
         """Health check.
@@ -183,10 +193,12 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
             True if the client is connected.
         """
         body = self._get_health_body()
-        response = self._provider.make_request(body, GetHealthResp)
+        response = self._make_request(body, GetHealthResp)
         return response.value == "ok"
 
-    def get_balance(self, pubkey: Pubkey, commitment: Optional[Commitment] = None) -> GetBalanceResp:
+    def get_balance(
+        self, pubkey: Pubkey, commitment: Optional[Commitment] = None
+    ) -> GetBalanceResp:
         """Returns the balance of the account of provided Pubkey.
 
         Args:
@@ -200,7 +212,7 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
             4104230290
         """
         body = self._get_balance_body(pubkey, commitment)
-        return self._provider.make_request(body, GetBalanceResp)
+        return self._make_request(body, GetBalanceResp)
 
     def get_account_info(
         self,
@@ -242,7 +254,7 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
             encoding=encoding,
             data_slice=data_slice,
         )
-        return self._provider.make_request(body, GetAccountInfoResp)
+        return self._make_request(body, GetAccountInfoResp)
 
     def get_account_info_json_parsed(
         self,
@@ -265,8 +277,10 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
                 11111111111111111111111111111111,
             )
         """
-        body = self._get_account_info_body(pubkey=pubkey, commitment=commitment, encoding="jsonParsed", data_slice=None)
-        return self._provider.make_request(body, GetAccountInfoMaybeJsonParsedResp)
+        body = self._get_account_info_body(
+            pubkey=pubkey, commitment=commitment, encoding="jsonParsed", data_slice=None
+        )
+        return self._make_request(body, GetAccountInfoMaybeJsonParsedResp)
 
     def get_block_commitment(self, slot: int) -> GetBlockCommitmentResp:
         """Fetch the commitment for particular block.
@@ -280,7 +294,7 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
             497717120
         """
         body = self._get_block_commitment_body(slot)
-        return self._provider.make_request(body, GetBlockCommitmentResp)
+        return self._make_request(body, GetBlockCommitmentResp)
 
     def get_block_time(self, slot: int) -> GetBlockTimeResp:
         """Fetch the estimated production time of a block.
@@ -294,7 +308,7 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
             1598400007
         """
         body = self._get_block_time_body(slot)
-        return self._provider.make_request(body, GetBlockTimeResp)
+        return self._make_request(body, GetBlockTimeResp)
 
     def get_cluster_nodes(self) -> GetClusterNodesResp:
         """Returns information about all the nodes participating in the cluster.
@@ -304,7 +318,7 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
             >>> solana_client.get_cluster_nodes().value[0].tpu # doctest: +SKIP
             '139.178.65.155:8004'
         """
-        return self._provider.make_request(self._get_cluster_nodes, GetClusterNodesResp)
+        return self._make_request(self._get_cluster_nodes, GetClusterNodesResp)
 
     def get_block(
         self,
@@ -329,9 +343,11 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
             )
         """
         body = self._get_block_body(slot, encoding, max_supported_transaction_version)
-        return self._provider.make_request(body, GetBlockResp)
+        return self._make_request(body, GetBlockResp)
 
-    def get_recent_performance_samples(self, limit: Optional[int] = None) -> GetRecentPerformanceSamplesResp:
+    def get_recent_performance_samples(
+        self, limit: Optional[int] = None
+    ) -> GetRecentPerformanceSamplesResp:
         """Returns a list of recent performance samples, in reverse slot order.
 
         Performance samples are taken every 60 seconds and include the number of transactions and slots that occur in a given time window.
@@ -352,7 +368,7 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
             )
         """  # noqa: E501 # pylint: disable=line-too-long
         body = self._get_recent_performance_samples_body(limit)
-        return self._provider.make_request(body, GetRecentPerformanceSamplesResp)
+        return self._make_request(body, GetRecentPerformanceSamplesResp)
 
     def get_recent_prioritization_fees(
         self, addresses: Optional[Sequence[Pubkey]] = None
@@ -374,9 +390,11 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
             )
         """
         body = GetRecentPrioritizationFees(addresses)
-        return self._provider.make_request(body, GetRecentPrioritizationFeesResp)
+        return self._make_request(body, GetRecentPrioritizationFeesResp)
 
-    def get_block_height(self, commitment: Optional[Commitment] = None) -> GetBlockHeightResp:
+    def get_block_height(
+        self, commitment: Optional[Commitment] = None
+    ) -> GetBlockHeightResp:
         """Returns the current block height of the node.
 
         Args:
@@ -388,9 +406,11 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
             1233
         """
         body = self._get_block_height_body(commitment)
-        return self._provider.make_request(body, GetBlockHeightResp)
+        return self._make_request(body, GetBlockHeightResp)
 
-    def get_blocks(self, start_slot: int, end_slot: Optional[int] = None) -> GetBlocksResp:
+    def get_blocks(
+        self, start_slot: int, end_slot: Optional[int] = None
+    ) -> GetBlocksResp:
         """Returns a list of confirmed blocks.
 
         Args:
@@ -403,7 +423,7 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
             [5, 6, 7, 8, 9, 10]
         """
         body = self._get_blocks_body(start_slot, end_slot)
-        return self._provider.make_request(body, GetBlocksResp)
+        return self._make_request(body, GetBlocksResp)
 
     def get_signatures_for_address(
         self,
@@ -437,8 +457,10 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
                 1111111111111111111111111111111111111111111111111111111111111111,
             )
         """
-        body = self._get_signatures_for_address_body(account, before, until, limit, commitment, min_context_slot)
-        return self._provider.make_request(body, GetSignaturesForAddressResp)
+        body = self._get_signatures_for_address_body(
+            account, before, until, limit, commitment, min_context_slot
+        )
+        return self._make_request(body, GetSignaturesForAddressResp)
 
     def get_transaction(
         self,
@@ -466,10 +488,14 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
             >>> solana_client.get_transaction(sig).value.block_time # doctest: +SKIP
             1234
         """  # noqa: E501 # pylint: disable=line-too-long
-        body = self._get_transaction_body(tx_sig, encoding, commitment, max_supported_transaction_version)
-        return self._provider.make_request(body, GetTransactionResp)
+        body = self._get_transaction_body(
+            tx_sig, encoding, commitment, max_supported_transaction_version
+        )
+        return self._make_request(body, GetTransactionResp)
 
-    def get_epoch_info(self, commitment: Optional[Commitment] = None) -> GetEpochInfoResp:
+    def get_epoch_info(
+        self, commitment: Optional[Commitment] = None
+    ) -> GetEpochInfoResp:
         """Returns information about the current epoch.
 
         Args:
@@ -481,7 +507,7 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
             0
         """
         body = self._get_epoch_info_body(commitment)
-        return self._provider.make_request(body, GetEpochInfoResp)
+        return self._make_request(body, GetEpochInfoResp)
 
     def get_epoch_schedule(self) -> GetEpochScheduleResp:
         """Returns epoch schedule information from this cluster's genesis config.
@@ -491,7 +517,7 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
             >>> solana_client.get_epoch_schedule().value.slots_per_epoch # doctest: +SKIP
             8192
         """
-        return self._provider.make_request(self._get_epoch_schedule, GetEpochScheduleResp)
+        return self._make_request(self._get_epoch_schedule, GetEpochScheduleResp)
 
     def get_fee_for_message(
         self, message: VersionedMessage, commitment: Optional[Commitment] = None
@@ -515,7 +541,7 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
             5000
         """
         body = self._get_fee_for_message_body(message, commitment)
-        return self._provider.make_request(body, GetFeeForMessageResp)
+        return self._make_request(body, GetFeeForMessageResp)
 
     def get_first_available_block(self) -> GetFirstAvailableBlockResp:
         """Returns the slot of the lowest confirmed block that has not been purged from the ledger.
@@ -525,7 +551,9 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
             >>> solana_client.get_first_available_block().value # doctest: +SKIP
             1
         """
-        return self._provider.make_request(self._get_first_available_block, GetFirstAvailableBlockResp)
+        return self._make_request(
+            self._get_first_available_block, GetFirstAvailableBlockResp
+        )
 
     def get_genesis_hash(self) -> GetGenesisHashResp:
         """Returns the genesis hash.
@@ -537,7 +565,7 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
                 EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG,
             )
         """
-        return self._provider.make_request(self._get_genesis_hash, GetGenesisHashResp)
+        return self._make_request(self._get_genesis_hash, GetGenesisHashResp)
 
     def get_identity(self) -> GetIdentityResp:
         """Returns the identity pubkey for the current node.
@@ -549,9 +577,11 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
                 2LVtX3Wq5bhqAYYaUYBRknWaYrsfYiXLQBHTxtHWD2mv,
             )
         """
-        return self._provider.make_request(self._get_identity, GetIdentityResp)
+        return self._make_request(self._get_identity, GetIdentityResp)
 
-    def get_inflation_governor(self, commitment: Optional[Commitment] = None) -> GetInflationGovernorResp:
+    def get_inflation_governor(
+        self, commitment: Optional[Commitment] = None
+    ) -> GetInflationGovernorResp:
         """Returns the current inflation governor.
 
         Args:
@@ -563,7 +593,7 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
             0.05
         """
         body = self._get_inflation_governor_body(commitment)
-        return self._provider.make_request(body, GetInflationGovernorResp)
+        return self._make_request(body, GetInflationGovernorResp)
 
     def get_inflation_rate(self) -> GetInflationRateResp:
         """Returns the specific inflation values for the current epoch.
@@ -573,7 +603,7 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
             >>> solana_client.get_inflation_rate().value.epoch # doctest: +SKIP
             1
         """
-        return self._provider.make_request(self._get_inflation_rate, GetInflationRateResp)
+        return self._make_request(self._get_inflation_rate, GetInflationRateResp)
 
     def get_inflation_reward(
         self,
@@ -594,7 +624,7 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
             2500
         """
         body = self._get_inflation_reward_body(pubkeys, epoch, commitment)
-        return self._provider.make_request(body, GetInflationRewardResp)
+        return self._make_request(body, GetInflationRewardResp)
 
     def get_largest_accounts(
         self, filter_opt: Optional[str] = None, commitment: Optional[Commitment] = None
@@ -611,7 +641,7 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
             500000000000000000
         """
         body = self._get_largest_accounts_body(filter_opt, commitment)
-        return self._provider.make_request(body, GetLargestAccountsResp)
+        return self._make_request(body, GetLargestAccountsResp)
 
     def get_leader_schedule(
         self, epoch: Optional[int] = None, commitment: Optional[Commitment] = None
@@ -631,9 +661,11 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
             ), [346448, 346449, 346450, 346451, 369140, 369141, 369142, 369143, 384204, 384205, 384206, 384207])
         """
         body = self._get_leader_schedule_body(epoch, commitment)
-        return self._provider.make_request(
+        return self._make_request(
             body,
-            cast(JsonRPCResponseParserType[GetLeaderScheduleResp], GetLeaderScheduleResp),
+            cast(
+                JsonRPCResponseParserType[GetLeaderScheduleResp], GetLeaderScheduleResp
+            ),
         )
 
     def get_minimum_balance_for_rent_exemption(
@@ -651,7 +683,7 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
             1238880
         """
         body = self._get_minimum_balance_for_rent_exemption_body(usize, commitment)
-        return self._provider.make_request(body, GetMinimumBalanceForRentExemptionResp)
+        return self._make_request(body, GetMinimumBalanceForRentExemptionResp)
 
     def get_multiple_accounts(
         self,
@@ -685,7 +717,7 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
             encoding=encoding,
             data_slice=data_slice,
         )
-        return self._provider.make_request(
+        return self._make_request(
             body,
             cast(
                 JsonRPCResponseParserType[GetMultipleAccountsResp],
@@ -719,7 +751,7 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
             encoding="jsonParsed",
             data_slice=None,
         )
-        return self._provider.make_request(body, GetMultipleAccountsMaybeJsonParsedResp)
+        return self._make_request(body, GetMultipleAccountsMaybeJsonParsedResp)
 
     def get_program_accounts(  # pylint: disable=too-many-arguments
         self,
@@ -757,7 +789,7 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
             data_slice=data_slice,
             filters=filters,
         )
-        return self._provider.make_request(body, GetProgramAccountsResp)
+        return self._make_request(body, GetProgramAccountsResp)
 
     def get_program_accounts_json_parsed(  # pylint: disable=too-many-arguments
         self,
@@ -790,9 +822,11 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
             data_slice=None,
             filters=filters,
         )
-        return self._provider.make_request(body, GetProgramAccountsMaybeJsonParsedResp)
+        return self._make_request(body, GetProgramAccountsMaybeJsonParsedResp)
 
-    def get_latest_blockhash(self, commitment: Optional[Commitment] = None) -> GetLatestBlockhashResp:
+    def get_latest_blockhash(
+        self, commitment: Optional[Commitment] = None
+    ) -> GetLatestBlockhashResp:
         """Returns the latest block hash from the ledger.
 
         Response also includes the last valid block height.
@@ -811,7 +845,7 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
             }
         """
         body = self._get_latest_blockhash_body(commitment)
-        return self._provider.make_request(body, GetLatestBlockhashResp)
+        return self._make_request(body, GetLatestBlockhashResp)
 
     def get_signature_statuses(
         self, signatures: List[Signature], search_transaction_history: bool = False
@@ -837,7 +871,7 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
             10
         """
         body = self._get_signature_statuses_body(signatures, search_transaction_history)
-        return self._provider.make_request(body, GetSignatureStatusesResp)
+        return self._make_request(body, GetSignatureStatusesResp)
 
     def get_slot(self, commitment: Optional[Commitment] = None) -> GetSlotResp:
         """Returns the current slot the node is processing.
@@ -851,9 +885,11 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
             7515
         """
         body = self._get_slot_body(commitment)
-        return self._provider.make_request(body, GetSlotResp)
+        return self._make_request(body, GetSlotResp)
 
-    def get_slot_leader(self, commitment: Optional[Commitment] = None) -> GetSlotLeaderResp:
+    def get_slot_leader(
+        self, commitment: Optional[Commitment] = None
+    ) -> GetSlotLeaderResp:
         """Returns the current slot leader.
 
         Args:
@@ -867,7 +903,7 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
             )
         """
         body = self._get_slot_leader_body(commitment)
-        return self._provider.make_request(body, GetSlotLeaderResp)
+        return self._make_request(body, GetSlotLeaderResp)
 
     def get_slot_leaders(self, start: int, limit: int) -> GetSlotLeadersResp:
         """Returns the list of slot leaders for the provided start slot and limit.
@@ -880,7 +916,7 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
             A list of slot leaders.
         """
         body = self._get_slot_leaders_body(start, limit)
-        return self._provider.make_request(body, GetSlotLeadersResp)
+        return self._make_request(body, GetSlotLeadersResp)
 
     def get_supply(self, commitment: Optional[Commitment] = None) -> GetSupplyResp:
         """Returns information about the current supply.
@@ -894,7 +930,7 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
             683635192454157660
         """
         body = self._get_supply_body(commitment)
-        return self._provider.make_request(body, GetSupplyResp)
+        return self._make_request(body, GetSupplyResp)
 
     def get_token_account_balance(
         self, pubkey: Pubkey, commitment: Optional[Commitment] = None
@@ -912,7 +948,7 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
             '9864'
         """
         body = self._get_token_account_balance_body(pubkey, commitment)
-        return self._provider.make_request(body, GetTokenAccountBalanceResp)
+        return self._make_request(body, GetTokenAccountBalanceResp)
 
     def get_token_accounts_by_delegate(
         self,
@@ -928,7 +964,7 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
             commitment: Bank state to query. It can be either "finalized", "confirmed" or "processed".
         """
         body = self._get_token_accounts_by_delegate_body(delegate, opts, commitment)
-        return self._provider.make_request(body, GetTokenAccountsByDelegateResp)
+        return self._make_request(body, GetTokenAccountsByDelegateResp)
 
     def get_token_accounts_by_delegate_json_parsed(
         self,
@@ -943,8 +979,10 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
             opts: Token account option specifying at least one of `mint` or `program_id`.
             commitment: Bank state to query. It can be either "finalized", "confirmed" or "processed".
         """
-        body = self._get_token_accounts_by_delegate_json_parsed_body(delegate, opts, commitment)
-        return self._provider.make_request(body, GetTokenAccountsByDelegateJsonParsedResp)
+        body = self._get_token_accounts_by_delegate_json_parsed_body(
+            delegate, opts, commitment
+        )
+        return self._make_request(body, GetTokenAccountsByDelegateJsonParsedResp)
 
     def get_token_accounts_by_owner(
         self,
@@ -960,7 +998,7 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
             commitment: Bank state to query. It can be either "finalized", "confirmed" or "processed".
         """
         body = self._get_token_accounts_by_owner_body(owner, opts, commitment)
-        return self._provider.make_request(body, GetTokenAccountsByOwnerResp)
+        return self._make_request(body, GetTokenAccountsByOwnerResp)
 
     def get_token_accounts_by_owner_json_parsed(
         self,
@@ -975,22 +1013,28 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
             opts: Token account option specifying at least one of `mint` or `program_id`.
             commitment: Bank state to query. It can be either "finalized", "confirmed" or "processed".
         """
-        body = self._get_token_accounts_by_owner_json_parsed_body(owner, opts, commitment)
-        return self._provider.make_request(body, GetTokenAccountsByOwnerJsonParsedResp)
+        body = self._get_token_accounts_by_owner_json_parsed_body(
+            owner, opts, commitment
+        )
+        return self._make_request(body, GetTokenAccountsByOwnerJsonParsedResp)
 
     def get_token_largest_accounts(
         self, pubkey: Pubkey, commitment: Optional[Commitment] = None
     ) -> GetTokenLargestAccountsResp:
         """Returns the 20 largest accounts of a particular SPL Token type."""
         body = self._get_token_largest_accounts_body(pubkey, commitment)
-        return self._provider.make_request(body, GetTokenLargestAccountsResp)
+        return self._make_request(body, GetTokenLargestAccountsResp)
 
-    def get_token_supply(self, pubkey: Pubkey, commitment: Optional[Commitment] = None) -> GetTokenSupplyResp:
+    def get_token_supply(
+        self, pubkey: Pubkey, commitment: Optional[Commitment] = None
+    ) -> GetTokenSupplyResp:
         """Returns the total supply of an SPL Token type."""
         body = self._get_token_supply_body(pubkey, commitment)
-        return self._provider.make_request(body, GetTokenSupplyResp)
+        return self._make_request(body, GetTokenSupplyResp)
 
-    def get_transaction_count(self, commitment: Optional[Commitment] = None) -> GetTransactionCountResp:
+    def get_transaction_count(
+        self, commitment: Optional[Commitment] = None
+    ) -> GetTransactionCountResp:
         """Returns the current Transaction count from the ledger.
 
         Args:
@@ -1002,7 +1046,7 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
             4554
         """
         body = self._get_transaction_count_body(commitment)
-        return self._provider.make_request(body, GetTransactionCountResp)
+        return self._make_request(body, GetTransactionCountResp)
 
     def get_minimum_ledger_slot(self) -> MinimumLedgerSlotResp:
         """Returns the lowest slot that the node has information about in its ledger.
@@ -1014,7 +1058,7 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
             >>> solana_client.get_minimum_ledger_slot().value # doctest: +SKIP
             1234
         """
-        return self._provider.make_request(self._minimum_ledger_slot, MinimumLedgerSlotResp)
+        return self._make_request(self._minimum_ledger_slot, MinimumLedgerSlotResp)
 
     def get_version(self) -> GetVersionResp:
         """Returns the current solana versions running on the node.
@@ -1024,7 +1068,7 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
             >>> solana_client.get_version().value.solana_core # doctest: +SKIP
             '1.13.2'
         """
-        return self._provider.make_request(self._get_version, GetVersionResp)
+        return self._make_request(self._get_version, GetVersionResp)
 
     def get_vote_accounts(
         self,
@@ -1050,7 +1094,7 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
         body = self._get_vote_accounts_body(
             vote_pubkey, commitment, keep_unstaked_delinquents, delinquent_slot_distance
         )
-        return self._provider.make_request(body, GetVoteAccountsResp)
+        return self._make_request(body, GetVoteAccountsResp)
 
     def request_airdrop(
         self, pubkey: Pubkey, lamports: int, commitment: Optional[Commitment] = None
@@ -1071,9 +1115,11 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
             )
         """
         body = self._request_airdrop_body(pubkey, lamports, commitment)
-        return self._provider.make_request(body, RequestAirdropResp)
+        return self._make_request(body, RequestAirdropResp)
 
-    def send_raw_transaction(self, txn: bytes, opts: Optional[types.TxOpts] = None) -> SendTransactionResp:
+    def send_raw_transaction(
+        self, txn: bytes, opts: Optional[types.TxOpts] = None
+    ) -> SendTransactionResp:
         """Send a transaction that has already been signed and serialized into the wire format.
 
         Args:
@@ -1101,9 +1147,13 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
                 1111111111111111111111111111111111111111111111111111111111111111,
             )
         """  # noqa: E501 # pylint: disable=line-too-long
-        opts_to_use = types.TxOpts(preflight_commitment=self._commitment) if opts is None else opts
+        opts_to_use = (
+            types.TxOpts(preflight_commitment=self._commitment)
+            if opts is None
+            else opts
+        )
         body = self._send_raw_transaction_body(txn, opts_to_use)
-        resp = self._provider.make_request(body, SendTransactionResp)
+        resp = self._make_request(body, SendTransactionResp)
         if opts_to_use.skip_confirmation:
             return self._post_send(resp)
         post_send_args = self._send_raw_transaction_post_send_args(resp, opts_to_use)
@@ -1134,7 +1184,11 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
             >>> client = Client("http://localhost:8899")
             >>> client.send_transaction(Transaction([sender], msg, client.get_latest_blockhash().value.blockhash)) # doctest: +SKIP
         """  # noqa: E501
-        tx_opts = types.TxOpts(preflight_commitment=self._commitment) if opts is None else opts
+        tx_opts = (
+            types.TxOpts(preflight_commitment=self._commitment)
+            if opts is None
+            else opts
+        )
         return self.send_raw_transaction(bytes(txn), opts=tx_opts)
 
     def simulate_transaction(
@@ -1192,7 +1246,7 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
             accounts_addresses,
             accounts_encoding,
         )
-        return self._provider.make_request(body, SimulateTransactionResp)
+        return self._make_request(body, SimulateTransactionResp)
 
     def validator_exit(self) -> ValidatorExitResp:
         """Request to have the validator exit.
@@ -1204,7 +1258,7 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
             >>> solana_client.validator_exit().value # doctest: +SKIP
             True
         """
-        return self._provider.make_request(self._validator_exit, ValidatorExitResp)  # type: ignore
+        return self._make_request(self._validator_exit, ValidatorExitResp)  # type: ignore
 
     def __post_send_with_confirm(
         self,
@@ -1214,8 +1268,12 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
     ) -> SendTransactionResp:
         resp = self._post_send(resp)
         sig = resp.value
-        self._provider.logger.info("Transaction sent to %s. Signature %s: ", self._provider.endpoint_uri, sig)
-        self.confirm_transaction(sig, conf_comm, last_valid_block_height=last_valid_block_height)
+        self._provider.logger.info(
+            "Transaction sent to %s. Signature %s: ", self._provider.endpoint_uri, sig
+        )
+        self.confirm_transaction(
+            sig, conf_comm, last_valid_block_height=last_valid_block_height
+        )
         return resp
 
     def confirm_transaction(
@@ -1252,7 +1310,9 @@ class Client(_ClientCore):  # pylint: disable=too-many-public-methods
                 current_blockheight = (self.get_block_height(commitment)).value
                 sleep(sleep_seconds)
             else:
-                raise TransactionExpiredBlockheightExceededError(f"{tx_sig} has expired: block height exceeded")
+                raise TransactionExpiredBlockheightExceededError(
+                    f"{tx_sig} has expired: block height exceeded"
+                )
             return resp
         else:
             while time() < timeout:

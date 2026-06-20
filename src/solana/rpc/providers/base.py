@@ -1,15 +1,11 @@
 """Base RPC Provider."""
 
-from typing import TypeVar
-
-from ..core import JsonRPCRequestSerializer, JsonRPCResponseParserType
-
-T = TypeVar("T")
+from ..core import JsonRPCRequestSerializer
 
 
 class BaseProvider:
     """Base class for RPC providers to implement."""
 
-    def make_request(self, body: JsonRPCRequestSerializer, parser: JsonRPCResponseParserType[T]) -> T:
-        """Make a request to the rpc endpoint."""
+    def send(self, body: JsonRPCRequestSerializer) -> str:
+        """Send a JSON-RPC request body and return the raw response string."""
         raise NotImplementedError("Providers must implement this method")

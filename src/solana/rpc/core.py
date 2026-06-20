@@ -159,7 +159,7 @@ _ParsedT = TypeVar("_ParsedT")
 
 
 @runtime_checkable
-class JsonRpcRequestBody(Protocol):
+class JsonRPCRequest(Protocol):
     """Protocol for JSON-RPC 2.0 request bodies.
 
     Any object with a ``to_json() -> str`` method satisfies this protocol,
@@ -172,14 +172,14 @@ class JsonRpcRequestBody(Protocol):
 
 
 @runtime_checkable
-class JsonRpcResponseParser(Protocol[_ParserResultT_co]):
+class JsonRPCResponseParser(Protocol[_ParserResultT_co]):
     """Protocol for JSON-RPC 2.0 response parsers.
 
     Any class with a ``from_json(raw: str) -> ...`` classmethod satisfies this
     protocol, including all solders response types and custom response classes.
 
     Type checking is structural — the return type is deliberately left
-    unconstrained so that ``isinstance(SomeResp, JsonRpcResponseParser)``
+    unconstrained so that ``isinstance(SomeResp, JsonRPCResponseParser)``
     works for every solders response class regardless of concrete type.
     """
 
@@ -189,7 +189,7 @@ class JsonRpcResponseParser(Protocol[_ParserResultT_co]):
         ...
 
 
-JsonRpcResponseParserType: TypeAlias = type[_ParsedT]
+JsonRPCResponseParserType: TypeAlias = type[_ParsedT]
 
 
 def _validate_jsonrpc_envelope(raw: str) -> dict[str, Any]:
@@ -243,7 +243,7 @@ def _validate_jsonrpc_envelope(raw: str) -> dict[str, Any]:
 
 def _decode_rpc_response(
     raw: str,
-    parser: JsonRpcResponseParserType[_ParsedT],
+    parser: JsonRPCResponseParserType[_ParsedT],
 ) -> _ParsedT:
     decoder = getattr(parser, "from_json", None)
     if not callable(decoder):
@@ -284,7 +284,7 @@ class RPCRequest(ABC):
     Subclasses only need to set ``_method`` and override ``_params()``.
 
     Note: any object with ``to_json() -> str`` already satisfies the
-    ``JsonRpcRequestBody`` Protocol — using this ABC is optional
+    ``JsonRPCRequest`` Protocol — using this ABC is optional
     but provides the JSON-RPC 2.0 envelope for free.
     """
 
@@ -315,7 +315,7 @@ class RPCResponse(ABC):
     The envelope (jsonrpc, id) is handled automatically.
 
     Note: any class with a ``from_json(raw: str) -> T`` classmethod already
-    satisfies the ``JsonRpcResponseParser`` Protocol — using this ABC is
+    satisfies the ``JsonRPCResponseParser`` Protocol — using this ABC is
     optional but provides the JSON-RPC 2.0 envelope parsing for free.
     """
 
@@ -374,7 +374,9 @@ class _ClientCore:  # pylint: disable=too-few-public-methods
     def _get_health_body(self) -> GetHealth:
         return GetHealth()
 
-    def _get_balance_body(self, pubkey: Pubkey, commitment: Optional[Commitment]) -> GetBalance:
+    def _get_balance_body(
+        self, pubkey: Pubkey, commitment: Optional[Commitment]
+    ) -> GetBalance:
         commitment_to_use = _COMMITMENT_TO_SOLDERS[commitment or self._commitment]
         return GetBalance(pubkey, RpcContextConfig(commitment=commitment_to_use))
 
@@ -386,7 +388,9 @@ class _ClientCore:  # pylint: disable=too-few-public-methods
         data_slice: Optional[types.DataSliceOpts],
     ) -> GetAccountInfo:
         data_slice_to_use = (
-            None if data_slice is None else UiDataSliceConfig(offset=data_slice.offset, length=data_slice.length)
+            None
+            if data_slice is None
+            else UiDataSliceConfig(offset=data_slice.offset, length=data_slice.length)
         )
         encoding_to_use = _ACCOUNT_ENCODING_TO_SOLDERS[encoding]
         commitment_to_use = _COMMITMENT_TO_SOLDERS[commitment or self._commitment]
@@ -406,7 +410,9 @@ class _ClientCore:  # pylint: disable=too-few-public-methods
         return GetBlockTime(slot)
 
     @staticmethod
-    def _get_block_body(slot: int, encoding: str, max_supported_transaction_version: Optional[int]) -> GetBlock:
+    def _get_block_body(
+        slot: int, encoding: str, max_supported_transaction_version: Optional[int]
+    ) -> GetBlock:
         encoding_to_use = _TX_ENCODING_TO_SOLDERS[encoding]
         config = RpcBlockConfig(
             encoding=encoding_to_use,
@@ -414,7 +420,9 @@ class _ClientCore:  # pylint: disable=too-few-public-methods
         )
         return GetBlock(slot=slot, config=config)
 
-    def _get_block_height_body(self, commitment: Optional[Commitment]) -> GetBlockHeight:
+    def _get_block_height_body(
+        self, commitment: Optional[Commitment]
+    ) -> GetBlockHeight:
         commitment_to_use = _COMMITMENT_TO_SOLDERS[commitment or self._commitment]
         return GetBlockHeight(RpcContextConfig(commitment=commitment_to_use))
 
@@ -477,18 +485,26 @@ class _ClientCore:  # pylint: disable=too-few-public-methods
             return GetFeeForMessage(message, commitment_to_use)
         return GetFeeForMessage(message, commitment_to_use)
 
-    def _get_inflation_governor_body(self, commitment: Optional[Commitment]) -> GetInflationGovernor:
+    def _get_inflation_governor_body(
+        self, commitment: Optional[Commitment]
+    ) -> GetInflationGovernor:
         commitment_to_use = _COMMITMENT_TO_SOLDERS[commitment or self._commitment]
         return GetInflationGovernor(commitment_to_use)
 
     def _get_largest_accounts_body(
         self, filter_opt: Optional[str], commitment: Optional[Commitment]
     ) -> GetLargestAccounts:
-        filter_to_use = None if filter_opt is None else _LARGEST_ACCOUNTS_FILTER_TO_SOLDERS[filter_opt]
+        filter_to_use = (
+            None
+            if filter_opt is None
+            else _LARGEST_ACCOUNTS_FILTER_TO_SOLDERS[filter_opt]
+        )
         commitment_to_use = _COMMITMENT_TO_SOLDERS[commitment or self._commitment]
         return GetLargestAccounts(commitment=commitment_to_use, filter_=filter_to_use)
 
-    def _get_leader_schedule_body(self, slot: Optional[int], commitment: Optional[Commitment]) -> GetLeaderSchedule:
+    def _get_leader_schedule_body(
+        self, slot: Optional[int], commitment: Optional[Commitment]
+    ) -> GetLeaderSchedule:
         commitment_to_use = _COMMITMENT_TO_SOLDERS[commitment or self._commitment]
         config = RpcLeaderScheduleConfig(commitment=commitment_to_use)
         return GetLeaderSchedule(slot, config)
@@ -509,7 +525,9 @@ class _ClientCore:  # pylint: disable=too-few-public-methods
         encoding_to_use = _ACCOUNT_ENCODING_TO_SOLDERS[encoding]
         commitment_to_use = _COMMITMENT_TO_SOLDERS[commitment or self._commitment]
         data_slice_to_use = (
-            None if data_slice is None else UiDataSliceConfig(offset=data_slice.offset, length=data_slice.length)
+            None
+            if data_slice is None
+            else UiDataSliceConfig(offset=data_slice.offset, length=data_slice.length)
         )
         config = RpcAccountInfoConfig(
             encoding=encoding_to_use,
@@ -526,10 +544,14 @@ class _ClientCore:  # pylint: disable=too-few-public-methods
         data_slice: Optional[types.DataSliceOpts],
         filters: Optional[Sequence[Union[int, types.MemcmpOpts]]] = None,
     ) -> GetProgramAccounts:  # pylint: disable=too-many-arguments
-        encoding_to_use = None if encoding is None else _ACCOUNT_ENCODING_TO_SOLDERS[encoding]
+        encoding_to_use = (
+            None if encoding is None else _ACCOUNT_ENCODING_TO_SOLDERS[encoding]
+        )
         commitment_to_use = _COMMITMENT_TO_SOLDERS[commitment or self._commitment]
         data_slice_to_use = (
-            None if data_slice is None else UiDataSliceConfig(offset=data_slice.offset, length=data_slice.length)
+            None
+            if data_slice is None
+            else UiDataSliceConfig(offset=data_slice.offset, length=data_slice.length)
         )
         account_config = RpcAccountInfoConfig(
             encoding=encoding_to_use,
@@ -539,12 +561,17 @@ class _ClientCore:  # pylint: disable=too-few-public-methods
         filters_to_use: Optional[List[Union[int, Memcmp]]] = (
             None
             if filters is None
-            else [x if isinstance(x, int) else Memcmp(offset=x.offset, bytes_=x.bytes) for x in filters]
+            else [
+                x if isinstance(x, int) else Memcmp(offset=x.offset, bytes_=x.bytes)
+                for x in filters
+            ]
         )
         config = RpcProgramAccountsConfig(account_config, filters_to_use)
         return GetProgramAccounts(pubkey, config)
 
-    def _get_latest_blockhash_body(self, commitment: Optional[Commitment]) -> GetLatestBlockhash:
+    def _get_latest_blockhash_body(
+        self, commitment: Optional[Commitment]
+    ) -> GetLatestBlockhash:
         commitment_to_use = _COMMITMENT_TO_SOLDERS[commitment or self._commitment]
         return GetLatestBlockhash(RpcContextConfig(commitment_to_use))
 
@@ -622,11 +649,15 @@ class _ClientCore:  # pylint: disable=too-few-public-methods
         data_slice_to_use = (
             None
             if maybe_data_slice is None
-            else UiDataSliceConfig(offset=maybe_data_slice.offset, length=maybe_data_slice.length)
+            else UiDataSliceConfig(
+                offset=maybe_data_slice.offset, length=maybe_data_slice.length
+            )
         )
         maybe_mint = opts.mint
         maybe_program_id = opts.program_id
-        filter_to_use: Union[RpcTokenAccountsFilterMint, RpcTokenAccountsFilterProgramId]
+        filter_to_use: Union[
+            RpcTokenAccountsFilterMint, RpcTokenAccountsFilterProgramId
+        ]
         if maybe_mint is not None:
             filter_to_use = RpcTokenAccountsFilterMint(maybe_mint)
         elif maybe_program_id is not None:
@@ -646,7 +677,9 @@ class _ClientCore:  # pylint: disable=too-few-public-methods
         opts: types.TokenAccountOpts,
         commitment: Optional[Commitment],
     ) -> GetTokenAccountsByDelegate:
-        pubkey, filter_, config = self._get_token_accounts_convert(delegate, opts, commitment)
+        pubkey, filter_, config = self._get_token_accounts_convert(
+            delegate, opts, commitment
+        )
         return GetTokenAccountsByDelegate(pubkey, filter_, config)
 
     def _get_token_accounts_by_owner_body(
@@ -655,7 +688,9 @@ class _ClientCore:  # pylint: disable=too-few-public-methods
         opts: types.TokenAccountOpts,
         commitment: Optional[Commitment],
     ) -> GetTokenAccountsByOwner:
-        pubkey, filter_, config = self._get_token_accounts_convert(owner, opts, commitment)
+        pubkey, filter_, config = self._get_token_accounts_convert(
+            owner, opts, commitment
+        )
         return GetTokenAccountsByOwner(pubkey, filter_, config)
 
     def _get_token_accounts_by_delegate_json_parsed_body(
@@ -664,8 +699,12 @@ class _ClientCore:  # pylint: disable=too-few-public-methods
         opts: types.TokenAccountOpts,
         commitment: Optional[Commitment],
     ) -> GetTokenAccountsByDelegate:
-        opts_to_use = types.TokenAccountOpts(opts.mint, opts.program_id, "jsonParsed", opts.data_slice)
-        pubkey, filter_, config = self._get_token_accounts_convert(delegate, opts_to_use, commitment)
+        opts_to_use = types.TokenAccountOpts(
+            opts.mint, opts.program_id, "jsonParsed", opts.data_slice
+        )
+        pubkey, filter_, config = self._get_token_accounts_convert(
+            delegate, opts_to_use, commitment
+        )
         return GetTokenAccountsByDelegate(pubkey, filter_, config)
 
     def _get_token_accounts_by_owner_json_parsed_body(
@@ -674,8 +713,12 @@ class _ClientCore:  # pylint: disable=too-few-public-methods
         opts: types.TokenAccountOpts,
         commitment: Optional[Commitment],
     ) -> GetTokenAccountsByOwner:
-        opts_to_use = types.TokenAccountOpts(opts.mint, opts.program_id, "jsonParsed", opts.data_slice)
-        pubkey, filter_, config = self._get_token_accounts_convert(owner, opts_to_use, commitment)
+        opts_to_use = types.TokenAccountOpts(
+            opts.mint, opts.program_id, "jsonParsed", opts.data_slice
+        )
+        pubkey, filter_, config = self._get_token_accounts_convert(
+            owner, opts_to_use, commitment
+        )
         return GetTokenAccountsByOwner(pubkey, filter_, config)
 
     def _get_token_largest_accounts_body(
@@ -684,11 +727,15 @@ class _ClientCore:  # pylint: disable=too-few-public-methods
         commitment_to_use = _COMMITMENT_TO_SOLDERS[commitment or self._commitment]
         return GetTokenLargestAccounts(pubkey, commitment_to_use)
 
-    def _get_token_supply_body(self, pubkey: Pubkey, commitment: Optional[Commitment]) -> GetTokenSupply:
+    def _get_token_supply_body(
+        self, pubkey: Pubkey, commitment: Optional[Commitment]
+    ) -> GetTokenSupply:
         commitment_to_use = _COMMITMENT_TO_SOLDERS[commitment or self._commitment]
         return GetTokenSupply(pubkey, commitment_to_use)
 
-    def _get_transaction_count_body(self, commitment: Optional[Commitment]) -> GetTransactionCount:
+    def _get_transaction_count_body(
+        self, commitment: Optional[Commitment]
+    ) -> GetTransactionCount:
         commitment_to_use = _COMMITMENT_TO_SOLDERS[commitment or self._commitment]
         return GetTransactionCount(RpcContextConfig(commitment_to_use))
 
@@ -708,12 +755,20 @@ class _ClientCore:  # pylint: disable=too-few-public-methods
         )
         return GetVoteAccounts(config)
 
-    def _request_airdrop_body(self, pubkey: Pubkey, lamports: int, commitment: Optional[Commitment]) -> RequestAirdrop:
+    def _request_airdrop_body(
+        self, pubkey: Pubkey, lamports: int, commitment: Optional[Commitment]
+    ) -> RequestAirdrop:
         commitment_to_use = _COMMITMENT_TO_SOLDERS[commitment or self._commitment]
-        return RequestAirdrop(pubkey, lamports, RpcRequestAirdropConfig(commitment=commitment_to_use))
+        return RequestAirdrop(
+            pubkey, lamports, RpcRequestAirdropConfig(commitment=commitment_to_use)
+        )
 
-    def _send_raw_transaction_body(self, txn: bytes, opts: types.TxOpts) -> SendRawTransaction:
-        preflight_commitment_to_use = _COMMITMENT_TO_SOLDERS[opts.preflight_commitment or self._commitment]
+    def _send_raw_transaction_body(
+        self, txn: bytes, opts: types.TxOpts
+    ) -> SendRawTransaction:
+        preflight_commitment_to_use = _COMMITMENT_TO_SOLDERS[
+            opts.preflight_commitment or self._commitment
+        ]
         config = RpcSendTransactionConfig(
             skip_preflight=opts.skip_preflight,
             preflight_commitment=preflight_commitment_to_use,

@@ -7,7 +7,7 @@ from typing import Dict, Optional
 import httpx2
 
 from ...exceptions import SolanaRpcException, handle_exceptions
-from ..core import JsonRpcRequestBody, JsonRpcResponseParserType
+from ..core import JsonRPCRequest, JsonRPCResponseParserType
 from .base import BaseProvider
 from .core import (
     DEFAULT_LIMITS,
@@ -37,20 +37,24 @@ class HTTPProvider(BaseProvider, _HTTPProviderCore):
                 limits=DEFAULT_LIMITS,
             )
         else:
-            self.session = httpx2.Client(timeout=timeout, proxy=proxy, limits=DEFAULT_LIMITS)
+            self.session = httpx2.Client(
+                timeout=timeout, proxy=proxy, limits=DEFAULT_LIMITS
+            )
 
     def __str__(self) -> str:
         """String definition for HTTPProvider."""
         return f"HTTP RPC connection {self.endpoint_uri}"
 
     @handle_exceptions(SolanaRpcException, httpx2.HTTPError)
-    def make_request(self, body: JsonRpcRequestBody, parser: JsonRpcResponseParserType[T]) -> T:
+    def make_request(
+        self, body: JsonRPCRequest, parser: JsonRPCResponseParserType[T]
+    ) -> T:
         """Make an HTTP request to an http rpc endpoint."""
         raw = self.make_request_unparsed(body)
         return _parse_raw(raw, parser=parser)
 
     @handle_exceptions(SolanaRpcException, httpx2.HTTPError)
-    def make_request_unparsed(self, body: JsonRpcRequestBody) -> str:
+    def make_request_unparsed(self, body: JsonRPCRequest) -> str:
         """Make an HTTP request to an http rpc endpoint."""
         request_kwargs = self._before_request(body=body)
         try:

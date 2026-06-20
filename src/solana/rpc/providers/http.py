@@ -37,18 +37,14 @@ class HTTPProvider(BaseProvider, _HTTPProviderCore):
                 limits=DEFAULT_LIMITS,
             )
         else:
-            self.session = httpx2.Client(
-                timeout=timeout, proxy=proxy, limits=DEFAULT_LIMITS
-            )
+            self.session = httpx2.Client(timeout=timeout, proxy=proxy, limits=DEFAULT_LIMITS)
 
     def __str__(self) -> str:
         """String definition for HTTPProvider."""
         return f"HTTP RPC connection {self.endpoint_uri}"
 
     @handle_exceptions(SolanaRpcException, httpx2.HTTPError)
-    def make_request(
-        self, body: JsonRPCRequest, parser: JsonRPCResponseParserType[T]
-    ) -> T:
+    def make_request(self, body: JsonRPCRequest, parser: JsonRPCResponseParserType[T]) -> T:
         """Make an HTTP request to an http rpc endpoint."""
         raw = self.make_request_unparsed(body)
         return _parse_raw(raw, parser=parser)

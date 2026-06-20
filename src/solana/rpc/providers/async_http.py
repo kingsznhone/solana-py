@@ -47,21 +47,15 @@ class AsyncHTTPProvider(AsyncBaseProvider, _HTTPProviderCore):
                 limits=DEFAULT_LIMITS,
             )
         else:
-            self.session = httpx2.AsyncClient(
-                timeout=timeout, proxy=proxy, limits=DEFAULT_LIMITS
-            )
-        self._limiter: Optional[AsyncLimiter] = (
-            AsyncLimiter(rate_limit, time_period=1) if rate_limit > 0 else None
-        )
+            self.session = httpx2.AsyncClient(timeout=timeout, proxy=proxy, limits=DEFAULT_LIMITS)
+        self._limiter: Optional[AsyncLimiter] = AsyncLimiter(rate_limit, time_period=1) if rate_limit > 0 else None
 
     def __str__(self) -> str:
         """String definition for HTTPProvider."""
         return f"Async HTTP RPC connection {self.endpoint_uri}"
 
     @handle_async_exceptions(SolanaRpcException, httpx2.HTTPError)
-    async def make_request(
-        self, body: JsonRPCRequest, parser: JsonRPCResponseParserType[T]
-    ) -> T:
+    async def make_request(self, body: JsonRPCRequest, parser: JsonRPCResponseParserType[T]) -> T:
         """Make an async HTTP request to an http rpc endpoint."""
         raw = await self.make_request_unparsed(body)
         return _parse_raw(raw, parser=parser)

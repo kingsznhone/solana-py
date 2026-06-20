@@ -10,7 +10,7 @@ from typing import Any, Dict, Optional, TypeVar
 import httpx2
 
 from ..core import (
-    JsonRPCRequest,
+    JsonRPCRequestSerializer,
     JsonRPCResponseParserType,
     _decode_rpc_response,
 )
@@ -55,12 +55,12 @@ class _HTTPProviderCore:  # pylint: disable=too-few-public-methods
             headers.update(self.extra_headers)
         return {"url": self.endpoint_uri, "headers": headers}
 
-    def _build_request_kwargs(self, body: JsonRPCRequest) -> Dict[str, Any]:
+    def _build_request_kwargs(self, body: JsonRPCRequestSerializer) -> Dict[str, Any]:
         common_kwargs = self._build_common_request_kwargs()
         data = body.to_json()
         return {**common_kwargs, "content": data}
 
-    def _before_request(self, body: JsonRPCRequest) -> Dict[str, Any]:
+    def _before_request(self, body: JsonRPCRequestSerializer) -> Dict[str, Any]:
         return self._build_request_kwargs(body=body)
 
 

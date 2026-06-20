@@ -70,7 +70,7 @@ from solana.rpc import types
 
 from .commitment import Commitment
 from .core import (
-    JsonRPCRequest,
+    JsonRPCRequestSerializer,
     JsonRPCResponseParserType,
     _decode_rpc_response,
     _COMMITMENT_TO_SOLDERS,
@@ -129,7 +129,7 @@ class AsyncClient(_ClientCore):  # pylint: disable=too-many-public-methods
 
     async def send_custom_request(
         self,
-        body: JsonRPCRequest,
+        body: JsonRPCRequestSerializer,
         parser: JsonRPCResponseParserType[_ParsedT],
     ) -> _ParsedT:
         """Make a raw RPC request with a custom body and parser.

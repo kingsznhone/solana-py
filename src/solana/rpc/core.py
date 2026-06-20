@@ -159,7 +159,7 @@ _ParsedT = TypeVar("_ParsedT")
 
 
 @runtime_checkable
-class JsonRPCRequest(Protocol):
+class JsonRPCRequestSerializer(Protocol):
     """Protocol for JSON-RPC 2.0 request bodies.
 
     Any object with a ``to_json() -> str`` method satisfies this protocol,
@@ -273,12 +273,12 @@ def _decode_rpc_response(
 # Convenience ABCs for custom RPC methods
 # -------------------------------------------------------
 
-_SelfRequest = TypeVar("_SelfRequest", bound="RPCRequest")
-_SelfResponse = TypeVar("_SelfResponse", bound="RPCResponse")
+_SelfRequest = TypeVar("_SelfRequest", bound="JsonRPCRequest")
+_SelfResponse = TypeVar("_SelfResponse", bound="JsonRPCResponse")
 
 
 @dataclass(frozen=True)
-class RPCRequest(ABC):
+class JsonRPCRequest(ABC):
     """Convenience base for a JSON-RPC 2.0 request.
 
     Subclasses only need to set ``_method`` and override ``_params()``.
@@ -308,7 +308,7 @@ class RPCRequest(ABC):
         return json.dumps(payload)
 
 
-class RPCResponse(ABC):
+class JsonRPCResponse(ABC):
     """Convenience base for a JSON-RPC 2.0 response.
 
     Subclasses define typed fields and implement ``_from_result(result: dict)``.

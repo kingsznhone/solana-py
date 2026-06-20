@@ -8,7 +8,7 @@ import httpx2
 from aiolimiter import AsyncLimiter
 
 from ...exceptions import SolanaRpcException, handle_async_exceptions
-from ..core import JsonRPCRequest, JsonRPCResponseParserType
+from ..core import JsonRPCRequestSerializer, JsonRPCResponseParserType
 from .async_base import AsyncBaseProvider
 from .core import (
     DEFAULT_LIMITS,
@@ -55,13 +55,13 @@ class AsyncHTTPProvider(AsyncBaseProvider, _HTTPProviderCore):
         return f"Async HTTP RPC connection {self.endpoint_uri}"
 
     @handle_async_exceptions(SolanaRpcException, httpx2.HTTPError)
-    async def make_request(self, body: JsonRPCRequest, parser: JsonRPCResponseParserType[T]) -> T:
+    async def make_request(self, body: JsonRPCRequestSerializer, parser: JsonRPCResponseParserType[T]) -> T:
         """Make an async HTTP request to an http rpc endpoint."""
         raw = await self.make_request_unparsed(body)
         return _parse_raw(raw, parser=parser)
 
     @handle_async_exceptions(SolanaRpcException, httpx2.HTTPError)
-    async def make_request_unparsed(self, body: JsonRPCRequest) -> str:
+    async def make_request_unparsed(self, body: JsonRPCRequestSerializer) -> str:
         """Make an async HTTP request to an http rpc endpoint."""
         if self._limiter is not None:
             async with self._limiter:

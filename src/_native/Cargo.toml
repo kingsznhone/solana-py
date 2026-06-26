@@ -1,0 +1,15 @@
+[package]
+name = "solana_kit"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "_core"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.29", features = ["extension-module"] }
+solana-sdk = "4.0"
+solana-system-interface = { version = "3.2", features = ["bincode"] }
+solana-compute-budget-interface = "3.0"
+wincode = "0.5"

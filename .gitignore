@@ -1,3 +1,5 @@
+**/target/**
+
 # notebook checkpoints
 .ipynb_checkpoints
 

@@ -47,6 +47,7 @@ dev = [
     "mkdocstrings-python>=2.0.5",
     "mkdocs-material>=9.7.6",
     "ruff>=0.15.18",
+    "maturin>=1.14.1",
 ]
 
 [build-system]

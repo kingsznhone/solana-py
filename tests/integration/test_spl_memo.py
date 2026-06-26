@@ -19,20 +19,40 @@ from ..utils import AIRDROP_AMOUNT, assert_valid_response
 async def test_send_memo_in_transaction(test_http_client_async: AsyncClient):
     """Test sending a memo instruction to localnet."""
     sender = Keypair()
-    airdrop_resp = await test_http_client_async.request_airdrop(sender.pubkey(), AIRDROP_AMOUNT)
+    airdrop_resp = await test_http_client_async.request_airdrop(
+        sender.pubkey(), AIRDROP_AMOUNT
+    )
     assert_valid_response(airdrop_resp)
     await test_http_client_async.confirm_transaction(airdrop_resp.value)
     raw_message = "test"
     message = bytes(raw_message, encoding="utf8")
     # Create memo params
     memo_params = MemoParams(
-        program_id=MEMO_PROGRAM_ID,
-        signer=sender.pubkey(),
+        program_id=bytes(MEMO_PROGRAM_ID),
+        signer=bytes(sender.pubkey()),
         message=message,
     )
     # Create transfer tx to add memo to transaction from stubbed sender
     blockhash = (await test_http_client_async.get_latest_blockhash()).value.blockhash
-    ixs = [create_memo(memo_params)]
+    _ix = create_memo(memo_params)
+    # The native extension returns a MemoInstruction with raw bytes;
+    # solders expects solders.instruction.Instruction. Re-wrap for now.
+    from solders.instruction import AccountMeta, Instruction
+    from solders.pubkey import Pubkey
+
+    ix = Instruction(
+        program_id=Pubkey(_ix.program_id),
+        data=_ix.data,
+        accounts=[
+            AccountMeta(
+                pubkey=Pubkey(a.pubkey),
+                is_signer=a.is_signer,
+                is_writable=a.is_writable,
+            )
+            for a in _ix.accounts
+        ],
+    )
+    ixs = [ix]
     msg = MessageV0.try_compile(
         payer=sender.pubkey(),
         instructions=ixs,

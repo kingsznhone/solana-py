@@ -111,8 +111,9 @@ handle that carries the server-assigned subscription ID and its kind. Pass that 
 IDs in the public API. A handle belongs to the connection that created it, and
 `recv()` yields notifications only — subscription confirmations never appear in the stream.
 
-`signature_subscribe()` is one-shot: the client drops the handle automatically once the
-`SignatureNotification` arrives, so don't call `unsubscribe()` for it afterwards.
+`signature_subscribe()` is one-shot: the server cancels it after the notification, so the
+client drops its local handle once the `SignatureNotification` arrives. Calling
+`unsubscribe()` for it afterwards raises `ValueError`.
 
 ## 🔨 Development
 

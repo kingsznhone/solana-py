@@ -49,8 +49,8 @@ if __name__ == "__main__":
 - **account_subscribe**: Monitor account data changes
 - **logs_subscribe**: Listen to transaction logs
 - **program_subscribe**: Monitor program account changes
-- **signature_subscribe**: Track transaction confirmations (one-shot; the client removes the
-  handle automatically after the notification)
+- **signature_subscribe**: Track transaction confirmations (one-shot; the server cancels it
+  after the notification and the client drops its local handle)
 - **slot_subscribe**: Monitor slot changes
 
 ## Key Concepts

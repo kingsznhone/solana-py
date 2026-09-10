@@ -81,37 +81,38 @@ asyncio.run(main())
 ```py
 import asyncio
 from asyncstdlib import enumerate
-from solana.rpc.websocket_api import connect
+from solana.rpc.websocket_api import SolanaWsClient
 
 
 async def main():
-    async with connect("wss://api.devnet.solana.com") as websocket:
-        await websocket.logs_subscribe()
-        first_resp = await websocket.recv()
-        subscription_id = first_resp[0].result
-        next_resp = await websocket.recv()
-        print(next_resp)
-        await websocket.logs_unsubscribe(subscription_id)
+    async with SolanaWsClient("wss://api.devnet.solana.com") as websocket:
+        # Returns once the server has confirmed the subscription.
+        subscription = await websocket.logs_subscribe()
+        msg = await websocket.recv()
+        print(msg)
+        await websocket.unsubscribe(subscription)
 
     # Alternatively, use the client as an infinite asynchronous iterator:
-    async with connect("wss://api.devnet.solana.com") as websocket:
-        await websocket.logs_subscribe()
-        first_resp = await websocket.recv()
-        subscription_id = first_resp[0].result
+    async with SolanaWsClient("wss://api.devnet.solana.com") as websocket:
+        subscription = await websocket.logs_subscribe()
         async for idx, msg in enumerate(websocket):
             if idx == 3:
                 break
             print(msg)
-        await websocket.logs_unsubscribe(subscription_id)
+        await websocket.unsubscribe(subscription)
 
 
 asyncio.run(main())
 ```
 
-`*_unsubscribe()` takes the server-assigned subscription ID (`first_resp[0].result`, as above).
-As a convenience it also accepts the request ID returned by the matching `*_subscribe()` helper,
-which is translated once the subscription confirmation has been received. Server-assigned IDs are
-resolved first, so prefer that form when you have it.
+Each `*_subscribe()` helper awaits the server confirmation and returns a `Subscription`
+handle that carries the server-assigned subscription ID and its kind. Pass that handle to
+`unsubscribe()`; there are no per-method `*_unsubscribe()` helpers and no raw subscription
+IDs in the public API. A handle belongs to the connection that created it, and
+`recv()` yields notifications only — subscription confirmations never appear in the stream.
+
+`signature_subscribe()` is one-shot: the client drops the handle automatically once the
+`SignatureNotification` arrives, so don't call `unsubscribe()` for it afterwards.
 
 ## 🔨 Development
 

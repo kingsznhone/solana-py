@@ -117,9 +117,7 @@ class UnsubscribeError(Exception):
     def __init__(self, subscription: Subscription) -> None:
         """Retain the handle whose unsubscribe request returned false."""
         self.subscription = subscription
-        super().__init__(
-            f"Unsubscribe returned false for {subscription.kind.value} {subscription.subscription_id}"
-        )
+        super().__init__(f"Unsubscribe returned false for {subscription.kind.value} {subscription.subscription_id}")
 
 
 @dataclass(slots=True)
@@ -131,12 +129,7 @@ class _PendingRequest(Generic[T]):
 
 
 def _positive_timeout(value: float, name: str) -> float:
-    if (
-        isinstance(value, bool)
-        or not isinstance(value, (int, float))
-        or not math.isfinite(value)
-        or value <= 0
-    ):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
         raise ValueError(f"{name} must be a finite positive number")
     return float(value)
 
@@ -166,9 +159,7 @@ class SolanaWsClient:
         """Create a client; the WebSocket is opened by :meth:`connect`."""
         self._uri = uri
         self._connect_kwargs = dict(kwargs)
-        self._connect_kwargs["close_timeout"] = _positive_timeout(
-            kwargs.get("close_timeout", 10.0), "close_timeout"
-        )
+        self._connect_kwargs["close_timeout"] = _positive_timeout(kwargs.get("close_timeout", 10.0), "close_timeout")
         self._ws: ClientConnection | None = None
         self._loop = asyncio.get_running_loop()
         self.request_timeout = _positive_timeout(request_timeout, "request_timeout")
@@ -202,9 +193,7 @@ class SolanaWsClient:
             self._started = True
             self._ws = await ws_connect(self._uri, **self._connect_kwargs)
             self._state = ConnectionState.OPEN
-            self._reader_task = self._loop.create_task(
-                self._read_loop(), name="solana-ws-reader"
-            )
+            self._reader_task = self._loop.create_task(self._read_loop(), name="solana-ws-reader")
             self._reader_task.add_done_callback(self._reader_finished)
             return self
 
@@ -219,20 +208,14 @@ class SolanaWsClient:
 
     def _reader_finished(self, task: asyncio.Task[None]) -> None:
         # Also covers cancellation before the reader coroutine first executes.
-        cause = (
-            asyncio.CancelledError("WebSocket reader cancelled")
-            if task.cancelled()
-            else task.exception()
-        )
+        cause = asyncio.CancelledError("WebSocket reader cancelled") if task.cancelled() else task.exception()
         if self._state is ConnectionState.OPEN:
             self._begin_shutdown(
                 cause or RuntimeError("WebSocket reader stopped unexpectedly"),
                 abort=True,
             )
 
-    def _begin_shutdown(
-        self, cause: BaseException | None = None, *, abort: bool
-    ) -> None:
+    def _begin_shutdown(self, cause: BaseException | None = None, *, abort: bool) -> None:
         if self._state is ConnectionState.CLOSED:
             return
         if cause is not None and self._terminal_error is None:
@@ -247,20 +230,14 @@ class SolanaWsClient:
         if self._aborting:
             self._abort_transport()
         if self._shutdown_task is None:
-            self._shutdown_task = self._loop.create_task(
-                self._shutdown(), name="solana-ws-shutdown"
-            )
+            self._shutdown_task = self._loop.create_task(self._shutdown(), name="solana-ws-shutdown")
             self._shutdown_task.add_done_callback(_consume_future_exception)
 
     def _fail_pending_requests(self) -> None:
         if not self._pending_requests:
             return
         error = self._terminal_error
-        if (
-            error is None
-            and self._ws is not None
-            and self._ws.protocol.state.name == "CLOSED"
-        ):
+        if error is None and self._ws is not None and self._ws.protocol.state.name == "CLOSED":
             error = self._ws.protocol.close_exc
         if error is None:
             error = RuntimeError("WebSocket connection closed")
@@ -299,27 +276,19 @@ class SolanaWsClient:
                 await asyncio.gather(self._reader_task, return_exceptions=True)
             self._state = ConnectionState.CLOSED
 
-    async def close(
-        self, code: int = CloseCode.NORMAL_CLOSURE, reason: str = ""
-    ) -> None:
+    async def close(self, code: int = CloseCode.NORMAL_CLOSURE, reason: str = "") -> None:
         """Run the standard close workflow, forcing transport cleanup on timeout."""
         frame = Close(code, reason)
         frame.check()
         if self._state is not ConnectionState.CLOSED:
             self._close_frame = frame
-        cause = (
-            None
-            if code in (CloseCode.NORMAL_CLOSURE, CloseCode.GOING_AWAY)
-            else ProtocolError(reason)
-        )
+        cause = None if code in (CloseCode.NORMAL_CLOSURE, CloseCode.GOING_AWAY) else ProtocolError(reason)
         self._begin_shutdown(cause, abort=False)
         task = self._shutdown_task
         if task is None:
             return
         try:
-            await asyncio.wait_for(
-                asyncio.shield(task), self._connect_kwargs["close_timeout"]
-            )
+            await asyncio.wait_for(asyncio.shield(task), self._connect_kwargs["close_timeout"])
         except TimeoutError:
             self._aborting = True
             self._abort_transport()
@@ -349,9 +318,7 @@ class SolanaWsClient:
         try:
             while True:
                 if self._state is not ConnectionState.OPEN:
-                    error = self._terminal_error or (
-                        self._ws.protocol.close_exc if self._ws is not None else None
-                    )
+                    error = self._terminal_error or (self._ws.protocol.close_exc if self._ws is not None else None)
                     if error is not None:
                         raise error
                 if self._notifications:
@@ -376,9 +343,7 @@ class SolanaWsClient:
                 if ws is None:
                     return
                 raw = await ws.recv()
-                for envelope in parse_websocket_message(
-                    raw.decode() if isinstance(raw, bytes) else raw
-                ):
+                for envelope in parse_websocket_message(raw.decode() if isinstance(raw, bytes) else raw):
                     if self._state is not ConnectionState.OPEN:
                         return
                     if isinstance(
@@ -396,9 +361,7 @@ class SolanaWsClient:
         except Exception as exc:  # noqa: BLE001 - surfaced via terminal error
             self._begin_shutdown(exc, abort=True)
 
-    def _dispatch_response(
-        self, envelope: SubscriptionResult | SubscriptionError | UnsubscribeResult
-    ) -> None:
+    def _dispatch_response(self, envelope: SubscriptionResult | SubscriptionError | UnsubscribeResult) -> None:
         request_id = envelope.id
         pending = self._pending_requests[request_id]
         if isinstance(envelope, SubscriptionError):
@@ -460,15 +423,9 @@ class SolanaWsClient:
             raise
         return pending
 
-    async def _wait_pending(
-        self, pending: _PendingRequest[T], timeout: float | None = None
-    ) -> T:
+    async def _wait_pending(self, pending: _PendingRequest[T], timeout: float | None = None) -> T:
         """Await a registered request and remove it on caller cancellation/timeout."""
-        duration = (
-            self.request_timeout
-            if timeout is None
-            else _positive_timeout(timeout, "timeout")
-        )
+        duration = self.request_timeout if timeout is None else _positive_timeout(timeout, "timeout")
         timer = asyncio.timeout(duration)
         try:
             async with timer:
@@ -495,9 +452,7 @@ class SolanaWsClient:
         subscription_id = await self._wait_pending(pending)
         return self._register_subscription(kind, subscription_id)
 
-    def _register_subscription(
-        self, kind: SubscriptionKind, subscription_id: int
-    ) -> Subscription:
+    def _register_subscription(self, kind: SubscriptionKind, subscription_id: int) -> Subscription:
         subscription = Subscription(subscription_id, kind)
         self._subscriptions[subscription_id] = subscription
         return subscription
@@ -505,9 +460,7 @@ class SolanaWsClient:
     def _remove_subscription(self, subscription_id: int) -> None:
         self._subscriptions.pop(subscription_id, None)
 
-    def _unsubscribe_request(
-        self, subscription: Subscription
-    ) -> JsonRpcRequestSerializer:
+    def _unsubscribe_request(self, subscription: Subscription) -> JsonRpcRequestSerializer:
         """Build the JSON-RPC request that cancels a subscription."""
         subscription_id = subscription.subscription_id
         request_id = next(self._request_counter)
@@ -553,20 +506,11 @@ class SolanaWsClient:
     ) -> Subscription:
         """Subscribe to account notifications for a public key."""
         config = None
-        if any(
-            value is not None
-            for value in (commitment, encoding, data_slice, min_context_slot)
-        ):
-            account_encoding = (
-                _ACCOUNT_ENCODING_TO_SOLDERS[encoding] if encoding is not None else None
-            )
-            account_commitment = (
-                _COMMITMENT_TO_SOLDERS[commitment] if commitment is not None else None
-            )
+        if any(value is not None for value in (commitment, encoding, data_slice, min_context_slot)):
+            account_encoding = _ACCOUNT_ENCODING_TO_SOLDERS[encoding] if encoding is not None else None
+            account_commitment = _COMMITMENT_TO_SOLDERS[commitment] if commitment is not None else None
             account_data_slice = (
-                UiDataSliceConfig(offset=data_slice.offset, length=data_slice.length)
-                if data_slice
-                else None
+                UiDataSliceConfig(offset=data_slice.offset, length=data_slice.length) if data_slice else None
             )
             config = RpcAccountInfoConfig(
                 account_encoding,
@@ -606,32 +550,21 @@ class SolanaWsClient:
             )
         ):
             account = RpcAccountInfoConfig(
-                encoding=(
-                    None if encoding is None else _ACCOUNT_ENCODING_TO_SOLDERS[encoding]
-                ),
-                commitment=(
-                    None if commitment is None else _COMMITMENT_TO_SOLDERS[commitment]
-                ),
+                encoding=(None if encoding is None else _ACCOUNT_ENCODING_TO_SOLDERS[encoding]),
+                commitment=(None if commitment is None else _COMMITMENT_TO_SOLDERS[commitment]),
                 min_context_slot=min_context_slot,
                 data_slice=(
                     None
                     if data_slice is None
-                    else UiDataSliceConfig(
-                        offset=data_slice.offset, length=data_slice.length
-                    )
+                    else UiDataSliceConfig(offset=data_slice.offset, length=data_slice.length)
                 ),
             )
             parsed_filters = (
                 None
                 if filters is None
-                else [
-                    x if isinstance(x, int) else Memcmp(offset=x.offset, bytes_=x.bytes)
-                    for x in filters
-                ]
+                else [x if isinstance(x, int) else Memcmp(offset=x.offset, bytes_=x.bytes) for x in filters]
             )
-            config = cast(Any, RpcProgramAccountsConfig)(
-                account, parsed_filters, with_context, sort_results
-            )
+            config = cast(Any, RpcProgramAccountsConfig)(account, parsed_filters, with_context, sort_results)
         return await self._subscribe(
             SubscriptionKind.PROGRAM,
             ProgramSubscribe(program_id, config, next(self._request_counter)),
@@ -640,15 +573,11 @@ class SolanaWsClient:
     async def logs_subscribe(
         self,
         *,
-        filter_: (
-            RpcTransactionLogsFilter | RpcTransactionLogsFilterMentions
-        ) = RpcTransactionLogsFilter.All,
+        filter_: (RpcTransactionLogsFilter | RpcTransactionLogsFilterMentions) = RpcTransactionLogsFilter.All,
         commitment: Commitment | None = None,
     ) -> Subscription:
         """Subscribe to transaction log notifications."""
-        logs_commitment = (
-            _COMMITMENT_TO_SOLDERS[commitment] if commitment is not None else None
-        )
+        logs_commitment = _COMMITMENT_TO_SOLDERS[commitment] if commitment is not None else None
         config = RpcTransactionLogsConfig(logs_commitment)
         return await self._subscribe(
             SubscriptionKind.LOGS,
@@ -666,12 +595,8 @@ class SolanaWsClient:
         max_supported_transaction_version: int | None = None,
     ) -> Subscription:
         """Subscribe to block notifications."""
-        block_commitment = (
-            _COMMITMENT_TO_SOLDERS[commitment] if commitment is not None else None
-        )
-        block_encoding = (
-            _TX_ENCODING_TO_SOLDERS[encoding] if encoding is not None else None
-        )
+        block_commitment = _COMMITMENT_TO_SOLDERS[commitment] if commitment is not None else None
+        block_encoding = _TX_ENCODING_TO_SOLDERS[encoding] if encoding is not None else None
         config = RpcBlockSubscribeConfig(
             block_commitment,
             block_encoding,
@@ -694,12 +619,8 @@ class SolanaWsClient:
         """Subscribe to signature status notifications."""
         config = None
         if commitment is not None or enable_received_notification is not None:
-            signature_commitment = (
-                _COMMITMENT_TO_SOLDERS[commitment] if commitment is not None else None
-            )
-            config = RpcSignatureSubscribeConfig(
-                signature_commitment, enable_received_notification
-            )
+            signature_commitment = _COMMITMENT_TO_SOLDERS[commitment] if commitment is not None else None
+            config = RpcSignatureSubscribeConfig(signature_commitment, enable_received_notification)
         return await self._subscribe(
             SubscriptionKind.SIGNATURE,
             SignatureSubscribe(signature, config, next(self._request_counter)),
@@ -707,9 +628,7 @@ class SolanaWsClient:
 
     async def slot_subscribe(self) -> Subscription:
         """Subscribe to slot notifications."""
-        return await self._subscribe(
-            SubscriptionKind.SLOT, SlotSubscribe(next(self._request_counter))
-        )
+        return await self._subscribe(SubscriptionKind.SLOT, SlotSubscribe(next(self._request_counter)))
 
     async def slots_updates_subscribe(self) -> Subscription:
         """Subscribe to slot update notifications."""
@@ -720,12 +639,8 @@ class SolanaWsClient:
 
     async def root_subscribe(self) -> Subscription:
         """Subscribe to root notifications."""
-        return await self._subscribe(
-            SubscriptionKind.ROOT, RootSubscribe(next(self._request_counter))
-        )
+        return await self._subscribe(SubscriptionKind.ROOT, RootSubscribe(next(self._request_counter)))
 
     async def vote_subscribe(self) -> Subscription:
         """Subscribe to vote notifications."""
-        return await self._subscribe(
-            SubscriptionKind.VOTE, VoteSubscribe(next(self._request_counter))
-        )
+        return await self._subscribe(SubscriptionKind.VOTE, VoteSubscribe(next(self._request_counter)))

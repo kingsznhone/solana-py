@@ -196,7 +196,7 @@ class SolanaWsClient:
         self._shutdown_task: asyncio.Task[None] | None = None
         self._close_frame = Close(CloseCode.NORMAL_CLOSURE, "")
 
-    async def connect(self) -> "SolanaWsClient":
+    async def connect(self) -> SolanaWsClient:
         """Open and own the native WebSocket, then start its sole reader."""
         async with self._connect_lock:
             if self._started:
@@ -210,7 +210,7 @@ class SolanaWsClient:
             self._reader_task.add_done_callback(self._reader_finished)
             return self
 
-    async def __aenter__(self) -> "SolanaWsClient":
+    async def __aenter__(self) -> SolanaWsClient:
         """Connect this client for use as an async context manager."""
         return await self.connect()
 
@@ -230,7 +230,10 @@ class SolanaWsClient:
         if isinstance(cause, ConnectionClosedOK):
             self._begin_shutdown(abort=False)
         else:
-            self._begin_shutdown(cause or RuntimeError("WebSocket reader stopped unexpectedly"), abort=True)
+            self._begin_shutdown(
+                cause or RuntimeError("WebSocket reader stopped unexpectedly"),
+                abort=True,
+            )
 
     def _begin_shutdown(self, cause: BaseException | None = None, *, abort: bool) -> None:
         if self._state is ConnectionState.CLOSED:

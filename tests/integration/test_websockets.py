@@ -1,8 +1,7 @@
-# pylint: disable=unused-argument,redefined-outer-name
 """Tests for the Websocket Client."""
 
 import asyncio
-from typing import AsyncGenerator, Tuple
+from collections.abc import AsyncGenerator
 
 import asyncstdlib
 import pytest
@@ -102,7 +101,7 @@ async def logs_subscribed(
 @pytest.fixture
 async def logs_subscribed_mentions_filter(
     stubbed_sender_for_websockets: Keypair, websocket: SolanaWsClient
-) -> AsyncGenerator[Tuple[Pubkey, Pubkey], None]:
+) -> AsyncGenerator[tuple[Pubkey, Pubkey], None]:
     """Setup logs subscription with a mentions filter."""
     recipient = Keypair().pubkey()
     unrelated = Keypair().pubkey()
@@ -124,7 +123,7 @@ async def block_subscribed(
 @pytest.fixture
 async def program_subscribed(
     websocket: SolanaWsClient, test_http_client_async: AsyncClient
-) -> AsyncGenerator[Tuple[Keypair, Keypair], None]:
+) -> AsyncGenerator[tuple[Keypair, Keypair], None]:
     """Setup program subscription."""
     program = Keypair()
     owned = Keypair()
@@ -255,7 +254,7 @@ async def test_logs_subscribe(
 async def test_logs_subscribe_mentions_filter(
     test_http_client_async: AsyncClient,
     websocket: SolanaWsClient,
-    logs_subscribed_mentions_filter: Tuple[Pubkey, Pubkey],
+    logs_subscribed_mentions_filter: tuple[Pubkey, Pubkey],
 ):
     """Test logs subscription with a mentions filter."""
     recipient, unrelated = logs_subscribed_mentions_filter
@@ -329,7 +328,7 @@ async def test_block_subscribe(
 async def test_program_subscribe(
     test_http_client_async: AsyncClient,
     websocket: SolanaWsClient,
-    program_subscribed: Tuple[Keypair, Keypair],
+    program_subscribed: tuple[Keypair, Keypair],
 ):
     """Test program subscription."""
     program, owned = program_subscribed

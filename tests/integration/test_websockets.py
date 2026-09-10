@@ -80,7 +80,11 @@ async def account_subscribed(
 ) -> AsyncGenerator[Pubkey, None]:
     """Setup account subscription."""
     recipient = Keypair()
-    subscription = await websocket.account_subscribe(pubkey=recipient.pubkey())
+    subscription = await websocket.account_subscribe(
+        pubkey=recipient.pubkey(),
+        commitment=Finalized,
+        encoding="base64",
+    )
     yield recipient.pubkey()
     await websocket.unsubscribe(subscription)
 
@@ -138,7 +142,7 @@ async def signature_subscribed(
     """Setup signature subscription."""
     recipient = Keypair()
     airdrop_resp = await test_http_client_async.request_airdrop(recipient.pubkey(), AIRDROP_AMOUNT)
-    await websocket.signature_subscribe(signature=airdrop_resp.value)
+    await websocket.signature_subscribe(signature=airdrop_resp.value, commitment=Finalized)
     # Signature subscriptions are one-shot: the server cancels them after the
     # notification, so no explicit unsubscribe is possible here.
     yield

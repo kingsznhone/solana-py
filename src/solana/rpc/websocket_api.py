@@ -221,12 +221,16 @@ class SolanaWsClient:
 
     def _reader_finished(self, task: asyncio.Task[None]) -> None:
         # Also covers cancellation before the reader coroutine first executes.
-        cause = asyncio.CancelledError("WebSocket reader cancelled") if task.cancelled() else task.exception()
-        if self._state is ConnectionState.OPEN:
-            self._begin_shutdown(
-                cause or RuntimeError("WebSocket reader stopped unexpectedly"),
-                abort=True,
-            )
+        if self._state is not ConnectionState.OPEN:
+            return
+        if task.cancelled():
+            self._begin_shutdown(asyncio.CancelledError("WebSocket reader cancelled"), abort=True)
+            return
+        cause = task.exception()
+        if isinstance(cause, ConnectionClosedOK):
+            self._begin_shutdown(abort=False)
+        else:
+            self._begin_shutdown(cause or RuntimeError("WebSocket reader stopped unexpectedly"), abort=True)
 
     def _begin_shutdown(self, cause: BaseException | None = None, *, abort: bool) -> None:
         if self._state is ConnectionState.CLOSED:
@@ -331,6 +335,8 @@ class SolanaWsClient:
         try:
             while True:
                 if self._state is not ConnectionState.OPEN:
+                    if self._ws is None:
+                        raise RuntimeError("WebSocket is not connected")
                     error = self._terminal_error or (self._ws.protocol.close_exc if self._ws is not None else None)
                     if error is not None:
                         raise error
@@ -350,29 +356,18 @@ class SolanaWsClient:
             return
 
     async def _read_loop(self) -> None:
-        try:
-            while self._state is ConnectionState.OPEN:
-                ws = self._ws
-                if ws is None:
+        while self._state is ConnectionState.OPEN:
+            ws = self._ws
+            if ws is None:
+                return
+            raw = await ws.recv()
+            for envelope in parse_websocket_message(raw.decode() if isinstance(raw, bytes) else raw):
+                if self._state is not ConnectionState.OPEN:
                     return
-                raw = await ws.recv()
-                for envelope in parse_websocket_message(raw.decode() if isinstance(raw, bytes) else raw):
-                    if self._state is not ConnectionState.OPEN:
-                        return
-                    if isinstance(
-                        envelope,
-                        (SubscriptionResult, SubscriptionError, UnsubscribeResult),
-                    ):
-                        self._dispatch_response(envelope)
-                    else:
-                        self._dispatch_notification(cast(Notification, envelope))
-        except ConnectionClosedOK:
-            self._begin_shutdown(abort=False)
-        except asyncio.CancelledError as exc:
-            if self._state is ConnectionState.OPEN:
-                self._begin_shutdown(exc, abort=True)
-        except Exception as exc:  # noqa: BLE001 - surfaced via terminal error
-            self._begin_shutdown(exc, abort=True)
+                if isinstance(envelope, (SubscriptionResult, SubscriptionError, UnsubscribeResult)):
+                    self._dispatch_response(envelope)
+                else:
+                    self._dispatch_notification(cast(Notification, envelope))
 
     def _dispatch_response(self, envelope: SubscriptionResult | SubscriptionError | UnsubscribeResult) -> None:
         request_id = envelope.id

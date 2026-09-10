@@ -36,6 +36,33 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
+## Managing the connection lifecycle
+
+The asynchronous context manager is the recommended form. It connects on entry
+and closes the WebSocket when the block exits, including after an exception:
+
+```python
+async with SolanaWsClient("wss://api.devnet.solana.com") as websocket:
+    subscription = await websocket.logs_subscribe()
+    notification = await websocket.recv()
+```
+
+If you call `connect()` manually, the caller owns final cleanup. Always wrap
+the client in `try/finally` and await `close()`:
+
+```python
+websocket = await SolanaWsClient("wss://api.devnet.solana.com").connect()
+try:
+    subscription = await websocket.logs_subscribe()
+    notification = await websocket.recv()
+finally:
+    await websocket.close()
+```
+
+This covers cancellation, `KeyboardInterrupt`, and application errors while
+the process is running. Forced termination such as `SIGKILL` or `os._exit`
+cannot execute Python cleanup code.
+
 ## Explanation
 
 1. **Create WebSocket connection**: Connect to the Solana WebSocket endpoint

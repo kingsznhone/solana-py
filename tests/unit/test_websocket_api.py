@@ -1,5 +1,6 @@
 """Unit tests for the websocket client lifecycle and typed API."""
 
+import asyncio
 import itertools
 from typing import cast
 
@@ -35,6 +36,47 @@ async def test_client_starts_closed():
     await client.close()
 
 
+async def test_close_without_connect_is_safe():
+    client = SolanaWsClient()
+    await client.close()
+    assert client.connection_state is ConnectionState.CLOSED
+
+
+async def test_recv_without_connect_raises():
+    client = SolanaWsClient()
+    with pytest.raises(RuntimeError, match="not connected"):
+        await client.recv()
+
+
+async def test_connect_then_close(monkeypatch):
+    class FakeWebSocket:
+        async def recv(self):
+            await asyncio.sleep(3600)
+
+        async def close(self):
+            return None
+
+        async def wait_closed(self):
+            return None
+
+        class transport:
+            @staticmethod
+            def abort():
+                return None
+
+    fake_ws = FakeWebSocket()
+
+    async def fake_connect(uri, **kwargs):
+        return fake_ws
+
+    monkeypatch.setattr("solana.rpc.websocket_api.ws_connect", fake_connect)
+    client = SolanaWsClient()
+    await client.connect()
+    assert client.connection_state is ConnectionState.OPEN
+    await client.close()
+    assert client.connection_state is ConnectionState.CLOSED
+
+
 @pytest.mark.parametrize(
     "kwargs",
     [{"request_timeout": 0}, {"close_timeout": 0}, {"notification_queue_size": 0}],
@@ -55,7 +97,9 @@ async def test_subscribe_helpers_build_typed_requests(monkeypatch):
 
     monkeypatch.setattr(client, "_subscribe", fake_subscribe)
     await client.account_subscribe(pubkey=Pubkey.default())
-    await client.logs_subscribe(filter_=RpcTransactionLogsFilterMentions(Pubkey.default()))
+    await client.logs_subscribe(
+        filter_=RpcTransactionLogsFilterMentions(Pubkey.default())
+    )
     await client.signature_subscribe(signature=Signature.default())
     assert [kind for kind, _ in captured] == [
         SubscriptionKind.ACCOUNT,
@@ -63,6 +107,23 @@ async def test_subscribe_helpers_build_typed_requests(monkeypatch):
         SubscriptionKind.SIGNATURE,
     ]
     assert [request.id for _, request in captured] == [1, 2, 3]
+
+
+async def test_program_subscribe_builds_configured_request(monkeypatch):
+    client = SolanaWsClient.__new__(SolanaWsClient)
+    client._request_counter = itertools.count(1)
+    captured = []
+
+    async def fake_subscribe(kind, request):
+        captured.append((kind, request))
+        return Subscription(42, kind)
+
+    monkeypatch.setattr(client, "_subscribe", fake_subscribe)
+    await client.program_subscribe(program_id=Pubkey.default(), with_context=True)
+
+    assert captured[0][0] is SubscriptionKind.PROGRAM
+    assert captured[0][1].id == 1
+    assert '"params"' in captured[0][1].to_json()
 
 
 def test_unsubscribe_request_uses_subscription_kind():

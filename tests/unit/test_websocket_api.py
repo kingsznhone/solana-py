@@ -97,9 +97,7 @@ async def test_subscribe_helpers_build_typed_requests(monkeypatch):
 
     monkeypatch.setattr(client, "_subscribe", fake_subscribe)
     await client.account_subscribe(pubkey=Pubkey.default())
-    await client.logs_subscribe(
-        filter_=RpcTransactionLogsFilterMentions(Pubkey.default())
-    )
+    await client.logs_subscribe(filter_=RpcTransactionLogsFilterMentions(Pubkey.default()))
     await client.signature_subscribe(signature=Signature.default())
     assert [kind for kind, _ in captured] == [
         SubscriptionKind.ACCOUNT,

@@ -7,7 +7,7 @@ import itertools
 import json
 import math
 from collections import deque
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from enum import Enum, StrEnum
@@ -90,6 +90,19 @@ class SubscriptionKind(StrEnum):
     SLOTS_UPDATES = "slotsUpdates"
     ROOT = "root"
     VOTE = "vote"
+
+
+_UNSUBSCRIBE_REQUESTS: dict[SubscriptionKind, Callable[[int, int], JsonRpcRequestSerializer]] = {
+    SubscriptionKind.ACCOUNT: AccountUnsubscribe,
+    SubscriptionKind.BLOCK: BlockUnsubscribe,
+    SubscriptionKind.LOGS: LogsUnsubscribe,
+    SubscriptionKind.PROGRAM: ProgramUnsubscribe,
+    SubscriptionKind.SIGNATURE: SignatureUnsubscribe,
+    SubscriptionKind.SLOT: SlotUnsubscribe,
+    SubscriptionKind.SLOTS_UPDATES: SlotsUpdatesUnsubscribe,
+    SubscriptionKind.ROOT: RootUnsubscribe,
+    SubscriptionKind.VOTE: VoteUnsubscribe,
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -448,7 +461,7 @@ class SolanaWsClient:
         kind: SubscriptionKind,
         request: JsonRpcRequestSerializer,
     ) -> Subscription:
-        pending = await self._request(request)
+        pending: _PendingRequest[int] = await self._request(request)
         subscription_id = await self._wait_pending(pending)
         return self._register_subscription(kind, subscription_id)
 
@@ -462,20 +475,8 @@ class SolanaWsClient:
 
     def _unsubscribe_request(self, subscription: Subscription) -> JsonRpcRequestSerializer:
         """Build the JSON-RPC request that cancels a subscription."""
-        subscription_id = subscription.subscription_id
-        request_id = next(self._request_counter)
-        request_type = {
-            SubscriptionKind.ACCOUNT: AccountUnsubscribe,
-            SubscriptionKind.BLOCK: BlockUnsubscribe,
-            SubscriptionKind.LOGS: LogsUnsubscribe,
-            SubscriptionKind.PROGRAM: ProgramUnsubscribe,
-            SubscriptionKind.SIGNATURE: SignatureUnsubscribe,
-            SubscriptionKind.SLOT: SlotUnsubscribe,
-            SubscriptionKind.SLOTS_UPDATES: SlotsUpdatesUnsubscribe,
-            SubscriptionKind.ROOT: RootUnsubscribe,
-            SubscriptionKind.VOTE: VoteUnsubscribe,
-        }[subscription.kind]
-        return request_type(subscription_id, request_id)
+        request_type = _UNSUBSCRIBE_REQUESTS[subscription.kind]
+        return request_type(subscription.subscription_id, next(self._request_counter))
 
     async def unsubscribe(self, subscription: Subscription) -> None:
         """Cancel a live subscription after receiving server confirmation."""
@@ -487,7 +488,7 @@ class SolanaWsClient:
         request = self._unsubscribe_request(subscription)
         self._unsubscribing.add(subscription_id)
         try:
-            pending = await self._request(request)
+            pending: _PendingRequest[bool] = await self._request(request)
             result = await self._wait_pending(pending)
             if not result:
                 raise UnsubscribeError(subscription)

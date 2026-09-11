@@ -3,7 +3,6 @@
 import asyncio
 import itertools
 import json
-from types import SimpleNamespace
 from typing import cast
 
 import pytest
@@ -18,7 +17,8 @@ from solders.rpc.responses import (
 )
 from solders.errors import SerdeJSONError
 from solders.signature import Signature
-from websockets.exceptions import ProtocolError
+from websockets.exceptions import ConnectionClosedOK, ProtocolError
+from websockets.frames import Close, CloseCode
 
 from solana.rpc.jsonrpc import SolanaJsonRpcError
 from solana.rpc.websocket_api import (
@@ -33,16 +33,13 @@ class _FakeWebSocket:
     def __init__(self, response: str | None = None) -> None:
         self._response = response
         self._messages: asyncio.Queue[str] = asyncio.Queue()
-        self.protocol = SimpleNamespace(
-            close_exc=None,
-            state=SimpleNamespace(name="OPEN"),
-        )
-        self.transport = SimpleNamespace(abort=self._abort)
         self.closed = False
 
     async def send(self, request: str) -> None:
         if self._response is not None:
-            response = self._response.replace("{request_id}", str(json.loads(request)["id"]))
+            response = self._response.replace(
+                "{request_id}", str(json.loads(request)["id"])
+            )
             await self._messages.put(response)
 
     async def recv(self) -> str:
@@ -52,10 +49,15 @@ class _FakeWebSocket:
         self.closed = True
 
     async def wait_closed(self) -> None:
-        self.protocol.state.name = "CLOSED"
+        return None
 
-    def _abort(self) -> None:
-        self.closed = True
+
+class _SlowClosing(_FakeWebSocket):
+    """The closing handshake suspends, so a cancellation can land in the middle of it."""
+
+    async def close(self, *args) -> None:
+        await asyncio.sleep(0.01)
+        await super().close(*args)
 
 
 def test_subscription_kinds_are_typed():
@@ -82,36 +84,18 @@ async def test_recv_without_connect_raises():
 
 
 async def test_connect_then_close(monkeypatch):
-    class FakeWebSocket:
-        async def recv(self):
-            await asyncio.sleep(3600)
-
-        async def close(self):
-            return None
-
-        async def wait_closed(self):
-            return None
-
-        class transport:
-            @staticmethod
-            def abort():
-                return None
-
-    fake_ws = FakeWebSocket()
-
-    async def fake_connect(uri, **kwargs):
-        return fake_ws
-
-    monkeypatch.setattr("solana.rpc.websocket_api.ws_connect", fake_connect)
-    client = SolanaWsClient()
-    await client.connect()
+    fake_ws = _FakeWebSocket()
+    client = await _connected(monkeypatch, fake_ws)
     assert client.connection_state is ConnectionState.OPEN
     await client.close()
     assert client.connection_state is ConnectionState.CLOSED
+    assert fake_ws.closed
 
 
 async def test_subscribe_propagates_server_request_error(monkeypatch):
-    fake_ws = _FakeWebSocket('{"jsonrpc":"2.0","error":{"code":-32602,"message":"invalid params"},"id":{request_id}}')
+    fake_ws = _FakeWebSocket(
+        '{"jsonrpc":"2.0","error":{"code":-32602,"message":"invalid params"},"id":{request_id}}'
+    )
 
     async def fake_connect(uri, **kwargs):
         return fake_ws
@@ -187,7 +171,9 @@ async def test_subscribe_helpers_build_typed_requests(monkeypatch):
 
     monkeypatch.setattr(client, "_subscribe", fake_subscribe)
     await client.account_subscribe(pubkey=Pubkey.default())
-    await client.logs_subscribe(filter_=RpcTransactionLogsFilterMentions(Pubkey.default()))
+    await client.logs_subscribe(
+        filter_=RpcTransactionLogsFilterMentions(Pubkey.default())
+    )
     await client.signature_subscribe(signature=Signature.default())
     assert [kind for kind, _ in captured] == [
         SubscriptionKind.ACCOUNT,
@@ -231,7 +217,6 @@ def _notification(raw: str) -> Notification:
 
 async def test_recv_preserves_notification_order():
     client = SolanaWsClient(notification_queue_size=2)
-    client._state = ConnectionState.OPEN
     first = _notification(
         '{"jsonrpc":"2.0","method":"slotNotification","params":'
         '{"result":{"parent":1,"root":1,"slot":2},"subscription":1}}'
@@ -249,7 +234,6 @@ async def test_recv_preserves_notification_order():
 
 async def test_signature_notification_removes_subscription():
     client = SolanaWsClient()
-    client._state = ConnectionState.OPEN
     client._subscriptions[42] = Subscription(42, SubscriptionKind.SIGNATURE)
     notification = _notification(
         '{"jsonrpc":"2.0","method":"signatureNotification","params":'
@@ -270,7 +254,6 @@ async def test_unsubscribe_rejects_inactive_handle():
 
 async def test_notification_queue_overflow():
     client = SolanaWsClient(notification_queue_size=1)
-    client._state = ConnectionState.OPEN
     notification = _notification(
         '{"jsonrpc":"2.0","method":"slotNotification","params":'
         '{"result":{"parent":1,"root":1,"slot":2},"subscription":1}}'
@@ -279,3 +262,187 @@ async def test_notification_queue_overflow():
     with pytest.raises(ProtocolError):
         client._dispatch_notification(notification)
     await client.close()
+
+
+async def _connected(monkeypatch, fake_ws):
+    async def fake_connect(uri, **kwargs):
+        return fake_ws
+
+    monkeypatch.setattr("solana.rpc.websocket_api.ws_connect", fake_connect)
+    return await SolanaWsClient().connect()
+
+
+async def test_recv_blocked_during_local_close_reports_clean_closure(monkeypatch):
+    client = await _connected(monkeypatch, _FakeWebSocket())
+    receiver = asyncio.create_task(client.recv())
+    await asyncio.sleep(0)
+    assert client._receiving
+
+    await client.close()
+
+    with pytest.raises(ConnectionClosedOK) as exc_info:
+        await receiver
+    assert exc_info.value.rcvd.code == CloseCode.NORMAL_CLOSURE
+
+
+async def test_async_for_exits_cleanly_on_local_close(monkeypatch):
+    client = await _connected(monkeypatch, _FakeWebSocket())
+
+    async def consume():
+        async for _ in client:
+            pass
+
+    task = asyncio.create_task(consume())
+    await asyncio.sleep(0)
+    await client.close()
+    await task
+
+
+def test_client_can_be_constructed_outside_a_running_loop():
+    """The loop is pinned by connect(), so construction needs no loop at all."""
+    client = SolanaWsClient()
+    assert client.connection_state is ConnectionState.CLOSED
+
+
+async def test_close_before_connect_refuses_to_open_a_socket(monkeypatch):
+    opened = []
+
+    async def fake_connect(uri, **kwargs):
+        opened.append(uri)
+        return _FakeWebSocket()
+
+    monkeypatch.setattr("solana.rpc.websocket_api.ws_connect", fake_connect)
+    client = SolanaWsClient()
+    await client.close()
+
+    with pytest.raises(RuntimeError, match="cannot be reused"):
+        await client.connect()
+    assert opened == []
+
+
+async def test_close_discards_undelivered_notifications(monkeypatch):
+    client = await _connected(monkeypatch, _FakeWebSocket())
+    client._dispatch_notification(
+        _notification(
+            '{"jsonrpc":"2.0","method":"slotNotification","params":'
+            '{"result":{"parent":1,"root":1,"slot":2},"subscription":1}}'
+        )
+    )
+    assert client._notifications
+
+    await client.close()
+
+    assert not client._notifications
+    with pytest.raises(ConnectionClosedOK):
+        await client.recv()
+
+
+async def test_close_releases_socket_when_caller_is_cancelled(monkeypatch):
+    fake_ws = _SlowClosing()
+    client = await _connected(monkeypatch, fake_ws)
+
+    closing = asyncio.create_task(client.close())
+    await asyncio.sleep(0)
+    closing.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await closing
+
+    assert fake_ws.closed
+    assert client.connection_state is ConnectionState.CLOSED
+
+
+async def test_close_releases_socket_when_caller_is_cancelled_twice(monkeypatch):
+    fake_ws = _SlowClosing()
+    client = await _connected(monkeypatch, fake_ws)
+
+    closing = asyncio.create_task(client.close())
+    await asyncio.sleep(0)
+    closing.cancel()
+    await asyncio.sleep(0)
+    closing.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await closing
+
+    # The caller gave up, but the shielded handshake still runs to completion.
+    await asyncio.sleep(0.05)
+    assert fake_ws.closed
+
+
+async def test_close_releases_socket_after_fatal_reader_error(monkeypatch):
+    class _Broken(_FakeWebSocket):
+        async def recv(self) -> str:
+            raise RuntimeError("stream is corrupt")
+
+    fake_ws = _Broken()
+    client = await _connected(monkeypatch, fake_ws)
+
+    with pytest.raises(RuntimeError, match="stream is corrupt"):
+        await client.recv()
+
+    await client.close()
+    assert fake_ws.closed
+    assert client.connection_state is ConnectionState.CLOSED
+
+
+async def test_async_with_reports_its_own_failure_and_releases_socket(monkeypatch):
+    fake_ws = _FakeWebSocket()
+
+    async def fake_connect(uri, **kwargs):
+        return fake_ws
+
+    monkeypatch.setattr("solana.rpc.websocket_api.ws_connect", fake_connect)
+    boom = ValueError("boom")
+    receiver: asyncio.Task[Notification] | None = None
+
+    with pytest.raises(ValueError) as exit_info:
+        async with SolanaWsClient() as client:
+            receiver = asyncio.create_task(client.recv())
+            await asyncio.sleep(0)
+            raise boom
+
+    assert exit_info.value is boom
+    assert receiver is not None
+    with pytest.raises(ValueError) as recv_info:
+        await receiver
+    assert recv_info.value is boom
+    assert fake_ws.closed
+
+
+async def test_remote_closure_exception_is_propagated_verbatim(monkeypatch):
+    frame = Close(CloseCode.GOING_AWAY, "server restarting")
+    remote = ConnectionClosedOK(frame, frame, True)
+
+    class _RemoteClosing(_FakeWebSocket):
+        async def recv(self) -> str:
+            raise remote
+
+    client = await _connected(monkeypatch, _RemoteClosing())
+    with pytest.raises(ConnectionClosedOK) as exc_info:
+        await client.recv()
+    assert exc_info.value is remote
+    await client.close()
+
+
+async def test_many_tasks_share_one_client(monkeypatch):
+    """The pinned loop constrains loops, not tasks: concurrent callers each await their own id."""
+    fake_ws = _FakeWebSocket(
+        '{"jsonrpc":"2.0","result":{request_id},"id":{request_id}}'
+    )
+    client = await _connected(monkeypatch, fake_ws)
+
+    subscriptions = await asyncio.gather(*(client.slot_subscribe() for _ in range(10)))
+
+    assert sorted(sub.subscription_id for sub in subscriptions) == list(range(1, 11))
+    assert len(client._subscriptions) == 10
+    await client.close()
+
+
+async def test_close_is_idempotent_and_concurrent_safe(monkeypatch):
+    fake_ws = _FakeWebSocket()
+    client = await _connected(monkeypatch, fake_ws)
+
+    await asyncio.gather(client.close(), client.close())
+    await client.close()
+
+    assert fake_ws.closed
+    assert client.connection_state is ConnectionState.CLOSED

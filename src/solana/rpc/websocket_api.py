@@ -8,7 +8,6 @@ import json
 import math
 from collections import deque
 from collections.abc import AsyncIterator, Callable, Sequence
-from contextlib import suppress
 from dataclasses import dataclass
 from enum import Enum, StrEnum
 from types import TracebackType
@@ -61,6 +60,8 @@ from websockets.asyncio.client import ClientConnection
 from websockets.asyncio.client import connect as ws_connect
 from websockets.exceptions import (
     ConcurrencyError,
+    ConnectionClosed,
+    ConnectionClosedError,
     ConnectionClosedOK,
     ProtocolError,
 )
@@ -153,6 +154,21 @@ def _consume_future_exception(future: asyncio.Future[Any]) -> None:
         future.exception()
 
 
+# RFC 6455 codes that ``websockets`` treats as a clean closure.
+_OK_CLOSE_CODES = frozenset({CloseCode.NORMAL_CLOSURE, CloseCode.GOING_AWAY, CloseCode.NO_STATUS_RCVD})
+
+
+def _local_close_exc(frame: Close) -> ConnectionClosed:
+    """Build the exception receivers see for a close this client initiated.
+
+    Decided here, when the close is requested, rather than read back from the
+    protocol later: ``protocol.close_exc`` is only valid once the closing
+    handshake has completed, which is one round trip after waiters are woken.
+    """
+    exc_type = ConnectionClosedOK if frame.code in _OK_CLOSE_CODES else ConnectionClosedError
+    return exc_type(frame, frame, False)
+
+
 class SolanaWsClient:
     """One reader dispatches RPC responses and delivers typed notifications.
 
@@ -174,7 +190,7 @@ class SolanaWsClient:
         self._connect_kwargs = dict(kwargs)
         self._connect_kwargs["close_timeout"] = _positive_timeout(kwargs.get("close_timeout", 10.0), "close_timeout")
         self._ws: ClientConnection | None = None
-        self._loop = asyncio.get_running_loop()
+        self._loop: asyncio.AbstractEventLoop | None = None
         self.request_timeout = _positive_timeout(request_timeout, "request_timeout")
         if type(notification_queue_size) is not int or notification_queue_size <= 0:
             raise ValueError("notification_queue_size must be a positive integer")
@@ -183,31 +199,26 @@ class SolanaWsClient:
         self._notification_ready = asyncio.Event()
         self._receiving = False
         self._connect_lock = asyncio.Lock()
-        self._started = False
         self._pending_requests: dict[int, _PendingRequest[Any]] = {}
         self._request_counter = itertools.count(1)
         self._subscriptions: dict[int, Subscription] = {}
         self._unsubscribing: set[int] = set()
         self._send_lock = asyncio.Lock()
-        self._state = ConnectionState.CLOSED
-        self._terminal_error: BaseException | None = None
-        self._aborting = False
+        self._closed_exc: BaseException | None = None
         self._reader_task: asyncio.Task[None] | None = None
-        self._shutdown_task: asyncio.Task[None] | None = None
-        self._close_frame = Close(CloseCode.NORMAL_CLOSURE, "")
 
     async def connect(self) -> SolanaWsClient:
         """Open and own the native WebSocket, then start its sole reader."""
         async with self._connect_lock:
-            if self._started:
-                if self._state is ConnectionState.OPEN:
-                    return self
+            if self.connection_state is ConnectionState.OPEN:
+                return self
+            # A failed handshake owns nothing, so only a used client is refused.
+            if self._ws is not None or self._closed_exc is not None:
                 raise RuntimeError("SolanaWsClient instances cannot be reused")
-            self._started = True
+            # Pinned before the first loop-bound resource exists, so every task and future shares one loop.
+            loop = self._loop = asyncio.get_running_loop()
             self._ws = await ws_connect(self._uri, **self._connect_kwargs)
-            self._state = ConnectionState.OPEN
-            self._reader_task = self._loop.create_task(self._read_loop(), name="solana-ws-reader")
-            self._reader_task.add_done_callback(self._reader_finished)
+            self._reader_task = loop.create_task(self._read_loop(), name="solana-ws-reader")
             return self
 
     async def __aenter__(self) -> SolanaWsClient:
@@ -217,102 +228,55 @@ class SolanaWsClient:
     @property
     def connection_state(self) -> ConnectionState:
         """Return the RPC dispatcher's lifecycle state."""
-        return self._state
+        if self._ws is None or self._closed_exc is not None:
+            return ConnectionState.CLOSED
+        return ConnectionState.OPEN
 
-    def _reader_finished(self, task: asyncio.Task[None]) -> None:
-        # Also covers cancellation before the reader coroutine first executes.
-        if self._state is not ConnectionState.OPEN:
-            return
-        if task.cancelled():
-            self._begin_shutdown(asyncio.CancelledError("WebSocket reader cancelled"), abort=True)
-            return
-        cause = task.exception()
-        if isinstance(cause, ConnectionClosedOK):
-            self._begin_shutdown(abort=False)
-        else:
-            self._begin_shutdown(
-                cause or RuntimeError("WebSocket reader stopped unexpectedly"),
-                abort=True,
-            )
+    def _abandon(self, exc: BaseException) -> None:
+        """Record why the stream ended and wake every waiter; the first cause wins.
 
-    def _begin_shutdown(self, cause: BaseException | None = None, *, abort: bool) -> None:
-        if self._state is ConnectionState.CLOSED:
+        A reader task cannot raise into the caller's stack, so the cause is
+        stored here and re-raised by whoever is waiting.
+        """
+        if self._closed_exc is not None:
             return
-        if cause is not None and self._terminal_error is None:
-            self._terminal_error = cause
-        self._aborting |= abort
-        self._state = ConnectionState.CLOSED
+        self._closed_exc = exc
+        # Undelivered notifications are void once the connection ends.
         self._notifications.clear()
         self._notification_ready.set()
-        self._fail_pending_requests()
-        self._subscriptions.clear()
-        self._unsubscribing.clear()
-        if self._aborting:
-            self._abort_transport()
-        if self._shutdown_task is None:
-            self._shutdown_task = self._loop.create_task(self._shutdown(), name="solana-ws-shutdown")
-            self._shutdown_task.add_done_callback(_consume_future_exception)
-
-    def _fail_pending_requests(self) -> None:
-        if not self._pending_requests:
-            return
-        error = self._terminal_error
-        if error is None and self._ws is not None and self._ws.protocol.state.name == "CLOSED":
-            error = self._ws.protocol.close_exc
-        if error is None:
-            error = RuntimeError("WebSocket connection closed")
         for pending in self._pending_requests.values():
             if not pending.future.done():
-                pending.future.set_exception(error)
-        self._pending_requests.clear()
-
-    def _abort_transport(self) -> None:
-        ws = self._ws
-        if ws is not None:
-            ws.transport.abort()
-
-    async def _shutdown(self) -> None:
-        try:
-            ws = self._ws
-            if ws is not None:
-                if self._aborting:
-                    self._abort_transport()
-                else:
-                    await ws.close(self._close_frame.code, self._close_frame.reason)
-                await ws.wait_closed()
-        except Exception as exc:  # noqa: BLE001 - shutdown must never propagate
-            if self._terminal_error is None:
-                self._terminal_error = exc
-            self._aborting = True
-            self._abort_transport()
-            ws = self._ws
-            if ws is not None:
-                with suppress(Exception):
-                    await ws.wait_closed()
-        finally:
-            if self._reader_task is not None:
-                if not self._reader_task.done():
-                    self._reader_task.cancel()
-                await asyncio.gather(self._reader_task, return_exceptions=True)
-            self._state = ConnectionState.CLOSED
+                pending.future.set_exception(exc)
+        # Subscriptions are owned by one physical connection and die with it.
+        self._subscriptions.clear()
 
     async def close(self, code: int = CloseCode.NORMAL_CLOSURE, reason: str = "") -> None:
-        """Run the standard close workflow, forcing transport cleanup on timeout."""
+        """Release the connection; the only cleanup path, idempotent and safe to call concurrently."""
         frame = Close(code, reason)
         frame.check()
-        if self._state is not ConnectionState.CLOSED:
-            self._close_frame = frame
-        cause = None if code in (CloseCode.NORMAL_CLOSURE, CloseCode.GOING_AWAY) else ProtocolError(reason)
-        self._begin_shutdown(cause, abort=False)
-        task = self._shutdown_task
-        if task is None:
+        self._abandon(_local_close_exc(frame))
+        loop = self._loop
+        if self._ws is None or loop is None:
             return
+        # Shielded so a cancelled caller -- a repeated Ctrl+C -- cannot abandon a half-closed socket.
+        release = loop.create_task(self._release(frame), name="solana-ws-release")
         try:
-            await asyncio.wait_for(asyncio.shield(task), self._connect_kwargs["close_timeout"])
-        except TimeoutError:
-            self._aborting = True
-            self._abort_transport()
-            await asyncio.shield(task)
+            await asyncio.shield(release)
+        except asyncio.CancelledError:
+            await asyncio.shield(release)
+            raise
+
+    async def _release(self, frame: Close) -> None:
+        ws = self._ws
+        try:
+            if ws is not None:
+                # Idempotent, bounded by close_timeout, and aborts the transport if that elapses.
+                await ws.close(frame.code, frame.reason)
+        finally:
+            reader = self._reader_task
+            if reader is not None:
+                reader.cancel()
+                await asyncio.gather(reader, return_exceptions=True)
 
     async def __aexit__(
         self,
@@ -320,31 +284,29 @@ class SolanaWsClient:
         exc_value: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
-        """Abort on exceptional context exit and always await cleanup."""
+        """Report the context's own failure to waiters, then always release the socket."""
         if exc_value is not None:
-            self._begin_shutdown(exc_value, abort=True)
+            self._abandon(exc_value)
         await self.close()
 
     async def recv(self) -> Notification:
         """Receive one notification; cancellation leaves queued notifications intact.
 
-        Only one caller may receive at a time. Connection lifecycle exceptions
-        are propagated from the underlying ``websockets`` connection.
-        Raw text/bytes decoding isn't supported.
+        Only one caller may receive at a time. A closed connection is reported
+        before any queued notification, which :meth:`_abandon` has already
+        discarded. Raw text/bytes decoding isn't supported.
         """
         if self._receiving:
             raise ConcurrencyError("Only one notification receiver may run at a time")
         self._receiving = True
         try:
             while True:
-                if self._state is not ConnectionState.OPEN:
-                    if self._ws is None:
-                        raise RuntimeError("WebSocket is not connected")
-                    error = self._terminal_error or (self._ws.protocol.close_exc if self._ws is not None else None)
-                    if error is not None:
-                        raise error
+                if self._closed_exc is not None:
+                    raise self._closed_exc
                 if self._notifications:
                     return self._notifications.popleft()
+                if self._ws is None:
+                    raise RuntimeError("WebSocket is not connected")
                 self._notification_ready.clear()
                 await self._notification_ready.wait()
         finally:
@@ -359,18 +321,25 @@ class SolanaWsClient:
             return
 
     async def _read_loop(self) -> None:
-        while self._state is ConnectionState.OPEN:
-            ws = self._ws
-            if ws is None:
-                return
-            raw = await ws.recv()
-            for envelope in parse_websocket_message(raw.decode() if isinstance(raw, bytes) else raw):
-                if self._state is not ConnectionState.OPEN:
-                    return
-                if isinstance(envelope, (SubscriptionResult, SubscriptionError, UnsubscribeResult)):
-                    self._dispatch_response(envelope)
-                else:
-                    self._dispatch_notification(cast(Notification, envelope))
+        ws = self._ws
+        if ws is None:
+            return
+        try:
+            while self._closed_exc is None:
+                raw = await ws.recv()
+                for envelope in parse_websocket_message(raw.decode() if isinstance(raw, bytes) else raw):
+                    if self._closed_exc is not None:
+                        return
+                    if isinstance(
+                        envelope,
+                        (SubscriptionResult, SubscriptionError, UnsubscribeResult),
+                    ):
+                        self._dispatch_response(envelope)
+                    else:
+                        self._dispatch_notification(cast(Notification, envelope))
+        # The reader records every failure of this connection.
+        except Exception as exc:  # noqa: BLE001
+            self._abandon(exc)
 
     def _dispatch_response(self, envelope: SubscriptionResult | SubscriptionError | UnsubscribeResult) -> None:
         request_id = envelope.id
@@ -404,8 +373,8 @@ class SolanaWsClient:
         self,
         request: JsonRpcRequestSerializer,
     ) -> _PendingRequest[T]:
-        ws = self._ws
-        if self._state is not ConnectionState.OPEN or ws is None:
+        ws, loop = self._ws, self._loop
+        if self.connection_state is not ConnectionState.OPEN or ws is None or loop is None:
             raise RuntimeError("WebSocket is not connected")
         serialized = request.to_json()
         body = json.loads(serialized)
@@ -413,19 +382,19 @@ class SolanaWsClient:
         # The protocol serializer exposes ``id`` at runtime; the shared
         # serializer type omits that concrete request attribute.
         request_id = cast(Any, request).id
-        future: asyncio.Future[T] = cast(asyncio.Future[T], self._loop.create_future())
+        future: asyncio.Future[T] = cast(asyncio.Future[T], loop.create_future())
         future.add_done_callback(_consume_future_exception)
         pending = _PendingRequest(request_id, future, body["method"])
         self._pending_requests[request_id] = pending
         try:
             async with self._send_lock:
-                if self._state is not ConnectionState.OPEN:
-                    raise ws.protocol.close_exc
+                if self._closed_exc is not None:
+                    raise self._closed_exc
                 pending.send_started = True
                 try:
                     await ws.send(serialized)
                 except Exception as exc:
-                    self._begin_shutdown(exc, abort=True)
+                    self._abandon(exc)
                     raise
         except BaseException:
             self._pending_requests.pop(request_id, None)
@@ -443,11 +412,11 @@ class SolanaWsClient:
                 return await asyncio.shield(pending.future)
         except asyncio.CancelledError as exc:
             if pending.send_started:
-                self._begin_shutdown(exc, abort=True)
+                self._abandon(exc)
             raise
         except TimeoutError as exc:
             if pending.send_started and timer.expired():
-                self._begin_shutdown(exc, abort=True)
+                self._abandon(exc)
             raise
         finally:
             self._pending_requests.pop(pending.request_id, None)

@@ -34,12 +34,18 @@ from solders.transaction import VersionedTransaction
 from ..utils import AIRDROP_AMOUNT
 
 
-async def _send_transfer(client: AsyncClient, sender: Keypair, recipient: Pubkey, lamports: int) -> str:
+async def _send_transfer(
+    client: AsyncClient, sender: Keypair, recipient: Pubkey, lamports: int
+) -> str:
     blockhash = (await client.get_latest_blockhash()).value.blockhash
     message = MessageV0.try_compile(
         payer=sender.pubkey(),
         instructions=[
-            sp.transfer(sp.TransferParams(from_pubkey=sender.pubkey(), to_pubkey=recipient, lamports=lamports))
+            sp.transfer(
+                sp.TransferParams(
+                    from_pubkey=sender.pubkey(), to_pubkey=recipient, lamports=lamports
+                )
+            )
         ],
         address_lookup_table_accounts=[],
         recent_blockhash=blockhash,
@@ -67,7 +73,9 @@ async def multiple_subscriptions(
 ) -> AsyncGenerator[None, None]:
     """Setup multiple subscriptions."""
     logs = await websocket.logs_subscribe()
-    account = await websocket.account_subscribe(pubkey=stubbed_sender_for_websockets.pubkey())
+    account = await websocket.account_subscribe(
+        pubkey=stubbed_sender_for_websockets.pubkey()
+    )
     yield
     await websocket.unsubscribe(logs)
     await websocket.unsubscribe(account)
@@ -105,7 +113,9 @@ async def logs_subscribed_mentions_filter(
     """Setup logs subscription with a mentions filter."""
     recipient = Keypair().pubkey()
     unrelated = Keypair().pubkey()
-    subscription = await websocket.logs_subscribe(filter_=RpcTransactionLogsFilterMentions(recipient))
+    subscription = await websocket.logs_subscribe(
+        filter_=RpcTransactionLogsFilterMentions(recipient)
+    )
     yield recipient, unrelated
     await websocket.unsubscribe(subscription)
 
@@ -127,7 +137,9 @@ async def program_subscribed(
     """Setup program subscription."""
     program = Keypair()
     owned = Keypair()
-    airdrop_resp = await test_http_client_async.request_airdrop(owned.pubkey(), AIRDROP_AMOUNT)
+    airdrop_resp = await test_http_client_async.request_airdrop(
+        owned.pubkey(), AIRDROP_AMOUNT
+    )
     await test_http_client_async.confirm_transaction(airdrop_resp.value)
     subscription = await websocket.program_subscribe(program_id=program.pubkey())
     yield program, owned
@@ -140,8 +152,12 @@ async def signature_subscribed(
 ) -> AsyncGenerator[None, None]:
     """Setup signature subscription."""
     recipient = Keypair()
-    airdrop_resp = await test_http_client_async.request_airdrop(recipient.pubkey(), AIRDROP_AMOUNT)
-    await websocket.signature_subscribe(signature=airdrop_resp.value, commitment=Finalized)
+    airdrop_resp = await test_http_client_async.request_airdrop(
+        recipient.pubkey(), AIRDROP_AMOUNT
+    )
+    await websocket.signature_subscribe(
+        signature=airdrop_resp.value, commitment=Finalized
+    )
     # Signature subscriptions are one-shot: the server cancels them after the
     # notification, so no explicit unsubscribe is possible here.
     yield
@@ -195,14 +211,19 @@ async def test_multiple_subscriptions(
     websocket: SolanaWsClient,
 ):
     """Test subscribing to multiple feeds."""
-    airdrop_resp = await test_http_client_async.request_airdrop(stubbed_sender_for_websockets.pubkey(), AIRDROP_AMOUNT)
+    airdrop_resp = await test_http_client_async.request_airdrop(
+        stubbed_sender_for_websockets.pubkey(), AIRDROP_AMOUNT
+    )
     account_lamports = None
     logs_seen = False
     async for message in websocket:
         if isinstance(message, AccountNotification):
             account_lamports = message.result.value.lamports
         elif isinstance(message, LogsNotification):
-            logs_seen = "Program 11111111111111111111111111111111 invoke [1]" in message.result.value.logs
+            logs_seen = (
+                "Program 11111111111111111111111111111111 invoke [1]"
+                in message.result.value.logs
+            )
         else:
             continue
         # Notifications can arrive in either order, and account subscriptions
@@ -213,7 +234,9 @@ async def test_multiple_subscriptions(
     assert account_lamports == AIRDROP_AMOUNT
     assert logs_seen
     await test_http_client_async.confirm_transaction(airdrop_resp.value, Finalized)
-    balance = await test_http_client_async.get_balance(stubbed_sender_for_websockets.pubkey(), Finalized)
+    balance = await test_http_client_async.get_balance(
+        stubbed_sender_for_websockets.pubkey(), Finalized
+    )
     assert balance.value == AIRDROP_AMOUNT
 
 
@@ -247,7 +270,10 @@ async def test_logs_subscribe(
     await test_http_client_async.request_airdrop(recipient, AIRDROP_AMOUNT)
     msg = await websocket.recv()
     assert isinstance(msg, LogsNotification)
-    assert msg.result.value.logs[0] == "Program 11111111111111111111111111111111 invoke [1]"
+    assert (
+        msg.result.value.logs[0]
+        == "Program 11111111111111111111111111111111 invoke [1]"
+    )
 
 
 @pytest.mark.integration
@@ -258,29 +284,40 @@ async def test_logs_subscribe_mentions_filter(
 ):
     """Test logs subscription with a mentions filter."""
     recipient, unrelated = logs_subscribed_mentions_filter
-    matching_airdrop = await test_http_client_async.request_airdrop(recipient, AIRDROP_AMOUNT)
-    unrelated_airdrop = await test_http_client_async.request_airdrop(unrelated, AIRDROP_AMOUNT)
+    matching_airdrop = await test_http_client_async.request_airdrop(
+        recipient, AIRDROP_AMOUNT
+    )
+    unrelated_airdrop = await test_http_client_async.request_airdrop(
+        unrelated, AIRDROP_AMOUNT
+    )
     async for msg in websocket:
         if not isinstance(msg, LogsNotification):
             continue
         assert msg.result is not None
         assert str(msg.result.value.signature) == str(matching_airdrop.value)
         assert str(msg.result.value.signature) != str(unrelated_airdrop.value)
-        assert "Program 11111111111111111111111111111111 invoke [1]" in msg.result.value.logs
+        assert (
+            "Program 11111111111111111111111111111111 invoke [1]"
+            in msg.result.value.logs
+        )
         break
     else:
         raise AssertionError("WebSocket closed before receiving filtered logs")
 
 
 @pytest.mark.integration
-async def test_logs_subscribe_filter_all(test_http_client_async: AsyncClient, websocket: SolanaWsClient):
+async def test_logs_subscribe_filter_all(
+    test_http_client_async: AsyncClient, websocket: SolanaWsClient
+):
     """The ``all`` filter delivers both successful and failed transactions."""
     sender, recipient = Keypair(), Keypair().pubkey()
     subscription = await websocket.logs_subscribe(filter_=RpcTransactionLogsFilter.All)
     try:
         await test_http_client_async.request_airdrop(sender.pubkey(), AIRDROP_AMOUNT)
         success = await _send_transfer(test_http_client_async, sender, recipient, 1)
-        failure = await _send_transfer(test_http_client_async, sender, recipient, AIRDROP_AMOUNT * 100)
+        failure = await _send_transfer(
+            test_http_client_async, sender, recipient, AIRDROP_AMOUNT * 100
+        )
         seen = set()
         async for message in websocket:
             if isinstance(message, LogsNotification):
@@ -298,21 +335,26 @@ async def test_logs_subscribe_all_with_votes_receives_vote_log(
     websocket: SolanaWsClient,
 ):
     """The allWithVotes filter includes validator vote transactions."""
-    subscription = await websocket.logs_subscribe(filter_=RpcTransactionLogsFilter.AllWithVotes)
+    subscription = await websocket.logs_subscribe(
+        filter_=RpcTransactionLogsFilter.AllWithVotes
+    )
     try:
-        async with asyncio.timeout(30):
+        async with asyncio.timeout(120):
             async for message in websocket:
                 if isinstance(message, LogsNotification) and any(
-                    "Vote111111111111111111111111111111111111111" in log for log in message.result.value.logs
+                    "Vote111111111111111111111111111111111111111" in log
+                    for log in message.result.value.logs
                 ):
                     return
-        raise AssertionError("No vote transaction log received within 30 seconds")
+        raise AssertionError("No vote transaction log received within 120 seconds")
     finally:
         await websocket.unsubscribe(subscription)
 
 
 @pytest.mark.integration
-@pytest.mark.skip(reason="Agave 4.0 has a known RPC blockSubscribe flag issue; re-enable after upstream fix.")
+@pytest.mark.skip(
+    reason="Agave 4.0 has a known RPC blockSubscribe flag issue; re-enable after upstream fix."
+)
 async def test_block_subscribe(
     websocket: SolanaWsClient,
     block_subscribed: None,

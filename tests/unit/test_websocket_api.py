@@ -13,6 +13,7 @@ from solders.rpc.responses import (
     Notification,
     SlotNotification,
     SignatureNotification,
+    SubscriptionResult,
     parse_websocket_message,
 )
 from solders.errors import SerdeJSONError
@@ -37,7 +38,9 @@ class _FakeWebSocket:
 
     async def send(self, request: str) -> None:
         if self._response is not None:
-            response = self._response.replace("{request_id}", str(json.loads(request)["id"]))
+            response = self._response.replace(
+                "{request_id}", str(json.loads(request)["id"])
+            )
             await self._messages.put(response)
 
     async def recv(self) -> str:
@@ -91,7 +94,9 @@ async def test_connect_then_close(monkeypatch):
 
 
 async def test_subscribe_propagates_server_request_error(monkeypatch):
-    fake_ws = _FakeWebSocket('{"jsonrpc":"2.0","error":{"code":-32602,"message":"invalid params"},"id":{request_id}}')
+    fake_ws = _FakeWebSocket(
+        '{"jsonrpc":"2.0","error":{"code":-32602,"message":"invalid params"},"id":{request_id}}'
+    )
 
     async def fake_connect(uri, **kwargs):
         return fake_ws
@@ -167,7 +172,9 @@ async def test_subscribe_helpers_build_typed_requests(monkeypatch):
 
     monkeypatch.setattr(client, "_subscribe", fake_subscribe)
     await client.account_subscribe(pubkey=Pubkey.default())
-    await client.logs_subscribe(filter_=RpcTransactionLogsFilterMentions(Pubkey.default()))
+    await client.logs_subscribe(
+        filter_=RpcTransactionLogsFilterMentions(Pubkey.default())
+    )
     await client.signature_subscribe(signature=Signature.default())
     assert [kind for kind, _ in captured] == [
         SubscriptionKind.ACCOUNT,
@@ -264,6 +271,38 @@ async def _connected(monkeypatch, fake_ws):
 
     monkeypatch.setattr("solana.rpc.websocket_api.ws_connect", fake_connect)
     return await SolanaWsClient().connect()
+
+
+async def test_duplicate_response_is_ignored(monkeypatch):
+    """A second response for the same id has no waiter left and must not kill the reader."""
+
+    class _Echoing(_FakeWebSocket):
+        async def send(self, request: str) -> None:
+            await super().send(request)
+            await super().send(request)
+
+    fake_ws = _Echoing('{"jsonrpc":"2.0","result":{request_id},"id":{request_id}}')
+    client = await _connected(monkeypatch, fake_ws)
+
+    first = await client.slot_subscribe()
+    second = await client.slot_subscribe()
+
+    assert (first.subscription_id, second.subscription_id) == (1, 2)
+    assert client.connection_state is ConnectionState.OPEN
+    await client.close()
+
+
+async def test_response_after_timeout_is_ignored():
+    """The client itself unregisters on timeout, so late responses are routine, not fatal."""
+    client = SolanaWsClient()
+    envelope = next(
+        iter(parse_websocket_message('{"jsonrpc":"2.0","result":7,"id":1}'))
+    )
+
+    client._dispatch_response(cast(SubscriptionResult, envelope))
+
+    assert client._closed_exc is None
+    await client.close()
 
 
 async def test_recv_blocked_during_local_close_reports_clean_closure(monkeypatch):
@@ -418,7 +457,9 @@ async def test_remote_closure_exception_is_propagated_verbatim(monkeypatch):
 
 async def test_many_tasks_share_one_client(monkeypatch):
     """The pinned loop constrains loops, not tasks: concurrent callers each await their own id."""
-    fake_ws = _FakeWebSocket('{"jsonrpc":"2.0","result":{request_id},"id":{request_id}}')
+    fake_ws = _FakeWebSocket(
+        '{"jsonrpc":"2.0","result":{request_id},"id":{request_id}}'
+    )
     client = await _connected(monkeypatch, fake_ws)
 
     subscriptions = await asyncio.gather(*(client.slot_subscribe() for _ in range(10)))

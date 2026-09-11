@@ -364,7 +364,11 @@ class SolanaWsClient:
         self, envelope: SubscriptionResult | SubscriptionError | UnsubscribeResult
     ) -> None:
         request_id = envelope.id
-        pending = self._pending_requests[request_id]
+        # Popping first makes dispatch idempotent: a response for a request that
+        # already timed out, was cancelled, or arrives twice has no waiter left.
+        pending = self._pending_requests.pop(request_id, None)
+        if pending is None:
+            return
         if isinstance(envelope, SubscriptionError):
             error = SolanaJsonRpcError(
                 int(getattr(cast(Any, envelope.error), "code", -32603)),
@@ -379,7 +383,6 @@ class SolanaWsClient:
             # prevents an immediately-following notification from racing the
             # subscribe() coroutine.
             pending.future.set_result(envelope.result)
-        self._pending_requests.pop(request_id, None)
 
     def _dispatch_notification(self, notification: Notification) -> None:
         subscription_id = notification.subscription

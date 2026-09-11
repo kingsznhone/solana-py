@@ -93,9 +93,7 @@ class SubscriptionKind(StrEnum):
     VOTE = "vote"
 
 
-_UNSUBSCRIBE_REQUESTS: dict[
-    SubscriptionKind, Callable[[int, int], JsonRpcRequestSerializer]
-] = {
+_UNSUBSCRIBE_REQUESTS: dict[SubscriptionKind, Callable[[int, int], JsonRpcRequestSerializer]] = {
     SubscriptionKind.ACCOUNT: AccountUnsubscribe,
     SubscriptionKind.BLOCK: BlockUnsubscribe,
     SubscriptionKind.LOGS: LogsUnsubscribe,
@@ -133,9 +131,7 @@ class UnsubscribeError(Exception):
     def __init__(self, subscription: Subscription) -> None:
         """Retain the handle whose unsubscribe request returned false."""
         self.subscription = subscription
-        super().__init__(
-            f"Unsubscribe returned false for {subscription.kind.value} {subscription.subscription_id}"
-        )
+        super().__init__(f"Unsubscribe returned false for {subscription.kind.value} {subscription.subscription_id}")
 
 
 @dataclass(slots=True)
@@ -143,16 +139,13 @@ class _PendingRequest(Generic[T]):
     request_id: int
     future: asyncio.Future[T]
     method: str
+    # Set for subscribe requests, whose result must become a registered handle.
+    kind: SubscriptionKind | None = None
     send_started: bool = False
 
 
 def _positive_timeout(value: float, name: str) -> float:
-    if (
-        isinstance(value, bool)
-        or not isinstance(value, (int, float))
-        or not math.isfinite(value)
-        or value <= 0
-    ):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
         raise ValueError(f"{name} must be a finite positive number")
     return float(value)
 
@@ -164,9 +157,7 @@ def _consume_future_exception(future: asyncio.Future[Any]) -> None:
 
 
 # RFC 6455 codes that ``websockets`` treats as a clean closure.
-_OK_CLOSE_CODES = frozenset(
-    {CloseCode.NORMAL_CLOSURE, CloseCode.GOING_AWAY, CloseCode.NO_STATUS_RCVD}
-)
+_OK_CLOSE_CODES = frozenset({CloseCode.NORMAL_CLOSURE, CloseCode.GOING_AWAY, CloseCode.NO_STATUS_RCVD})
 
 
 def _local_close_exc(frame: Close) -> ConnectionClosed:
@@ -176,9 +167,7 @@ def _local_close_exc(frame: Close) -> ConnectionClosed:
     protocol later: ``protocol.close_exc`` is only valid once the closing
     handshake has completed, which is one round trip after waiters are woken.
     """
-    exc_type = (
-        ConnectionClosedOK if frame.code in _OK_CLOSE_CODES else ConnectionClosedError
-    )
+    exc_type = ConnectionClosedOK if frame.code in _OK_CLOSE_CODES else ConnectionClosedError
     return exc_type(frame, frame, False)
 
 
@@ -201,9 +190,7 @@ class SolanaWsClient:
         """Create a client; the WebSocket is opened by :meth:`connect`."""
         self._uri = uri
         self._connect_kwargs = dict(kwargs)
-        self._connect_kwargs["close_timeout"] = _positive_timeout(
-            kwargs.get("close_timeout", 10.0), "close_timeout"
-        )
+        self._connect_kwargs["close_timeout"] = _positive_timeout(kwargs.get("close_timeout", 10.0), "close_timeout")
         self._ws: ClientConnection | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self.request_timeout = _positive_timeout(request_timeout, "request_timeout")
@@ -233,9 +220,7 @@ class SolanaWsClient:
             # Pinned before the first loop-bound resource exists, so every task and future shares one loop.
             loop = self._loop = asyncio.get_running_loop()
             self._ws = await ws_connect(self._uri, **self._connect_kwargs)
-            self._reader_task = loop.create_task(
-                self._read_loop(), name="solana-ws-reader"
-            )
+            self._reader_task = loop.create_task(self._read_loop(), name="solana-ws-reader")
             return self
 
     async def __aenter__(self) -> SolanaWsClient:
@@ -265,9 +250,7 @@ class SolanaWsClient:
         # Subscriptions are owned by one physical connection and die with it.
         self._subscriptions.clear()
 
-    async def close(
-        self, code: int = CloseCode.NORMAL_CLOSURE, reason: str = ""
-    ) -> None:
+    async def close(self, code: int = CloseCode.NORMAL_CLOSURE, reason: str = "") -> None:
         """Release the connection; the only cleanup path, idempotent and safe to call concurrently."""
         frame = Close(code, reason)
         frame.check()
@@ -344,9 +327,7 @@ class SolanaWsClient:
         try:
             while self._closed_exc is None:
                 raw = await ws.recv()
-                for envelope in parse_websocket_message(
-                    raw.decode() if isinstance(raw, bytes) else raw
-                ):
+                for envelope in parse_websocket_message(raw.decode() if isinstance(raw, bytes) else raw):
                     if self._closed_exc is not None:
                         return
                     if isinstance(
@@ -360,9 +341,7 @@ class SolanaWsClient:
         except Exception as exc:  # noqa: BLE001
             self._abandon(exc)
 
-    def _dispatch_response(
-        self, envelope: SubscriptionResult | SubscriptionError | UnsubscribeResult
-    ) -> None:
+    def _dispatch_response(self, envelope: SubscriptionResult | SubscriptionError | UnsubscribeResult) -> None:
         request_id = envelope.id
         # Popping first makes dispatch idempotent: a response for a request that
         # already timed out, was cancelled, or arrives twice has no waiter left.
@@ -377,11 +356,13 @@ class SolanaWsClient:
                 method=pending.method,
             )
             pending.future.set_exception(error)
+        elif pending.kind is not None:
+            # Registered before the caller is woken: the reader keeps draining
+            # frames while that coroutine is merely scheduled, so a notification
+            # following the confirmation must already find the handle.
+            pending.future.set_result(self._register_subscription(pending.kind, cast(int, envelope.result)))
         else:
-            # Commit response-derived state before waking the caller.  This
-            # keeps subscription registration atomic with confirmation and
-            # prevents an immediately-following notification from racing the
-            # subscribe() coroutine.
+            # No kind means an unsubscribe, whose result is the server's boolean.
             pending.future.set_result(envelope.result)
 
     def _dispatch_notification(self, notification: Notification) -> None:
@@ -396,13 +377,10 @@ class SolanaWsClient:
     async def _request(
         self,
         request: JsonRpcRequestSerializer,
+        kind: SubscriptionKind | None = None,
     ) -> _PendingRequest[T]:
         ws, loop = self._ws, self._loop
-        if (
-            self.connection_state is not ConnectionState.OPEN
-            or ws is None
-            or loop is None
-        ):
+        if self.connection_state is not ConnectionState.OPEN or ws is None or loop is None:
             raise RuntimeError("WebSocket is not connected")
         serialized = request.to_json()
         body = json.loads(serialized)
@@ -412,7 +390,7 @@ class SolanaWsClient:
         request_id = cast(Any, request).id
         future: asyncio.Future[T] = cast(asyncio.Future[T], loop.create_future())
         future.add_done_callback(_consume_future_exception)
-        pending = _PendingRequest(request_id, future, body["method"])
+        pending = _PendingRequest(request_id, future, body["method"], kind)
         self._pending_requests[request_id] = pending
         try:
             async with self._send_lock:
@@ -431,15 +409,9 @@ class SolanaWsClient:
             raise
         return pending
 
-    async def _wait_pending(
-        self, pending: _PendingRequest[T], timeout: float | None = None
-    ) -> T:
+    async def _wait_pending(self, pending: _PendingRequest[T], timeout: float | None = None) -> T:
         """Await a registered request and remove it on caller cancellation/timeout."""
-        duration = (
-            self.request_timeout
-            if timeout is None
-            else _positive_timeout(timeout, "timeout")
-        )
+        duration = self.request_timeout if timeout is None else _positive_timeout(timeout, "timeout")
         timer = asyncio.timeout(duration)
         try:
             async with timer:
@@ -462,13 +434,10 @@ class SolanaWsClient:
         kind: SubscriptionKind,
         request: JsonRpcRequestSerializer,
     ) -> Subscription:
-        pending: _PendingRequest[int] = await self._request(request)
-        subscription_id = await self._wait_pending(pending)
-        return self._register_subscription(kind, subscription_id)
+        pending: _PendingRequest[Subscription] = await self._request(request, kind)
+        return await self._wait_pending(pending)
 
-    def _register_subscription(
-        self, kind: SubscriptionKind, subscription_id: int
-    ) -> Subscription:
+    def _register_subscription(self, kind: SubscriptionKind, subscription_id: int) -> Subscription:
         subscription = Subscription(subscription_id, kind)
         self._subscriptions[subscription_id] = subscription
         return subscription
@@ -476,9 +445,7 @@ class SolanaWsClient:
     def _remove_subscription(self, subscription_id: int) -> None:
         self._subscriptions.pop(subscription_id, None)
 
-    def _unsubscribe_request(
-        self, subscription: Subscription
-    ) -> JsonRpcRequestSerializer:
+    def _unsubscribe_request(self, subscription: Subscription) -> JsonRpcRequestSerializer:
         """Build the JSON-RPC request that cancels a subscription."""
         request_type = _UNSUBSCRIBE_REQUESTS[subscription.kind]
         return request_type(subscription.subscription_id, next(self._request_counter))
@@ -512,20 +479,11 @@ class SolanaWsClient:
     ) -> Subscription:
         """Subscribe to account notifications for a public key."""
         config = None
-        if any(
-            value is not None
-            for value in (commitment, encoding, data_slice, min_context_slot)
-        ):
-            account_encoding = (
-                _ACCOUNT_ENCODING_TO_SOLDERS[encoding] if encoding is not None else None
-            )
-            account_commitment = (
-                _COMMITMENT_TO_SOLDERS[commitment] if commitment is not None else None
-            )
+        if any(value is not None for value in (commitment, encoding, data_slice, min_context_slot)):
+            account_encoding = _ACCOUNT_ENCODING_TO_SOLDERS[encoding] if encoding is not None else None
+            account_commitment = _COMMITMENT_TO_SOLDERS[commitment] if commitment is not None else None
             account_data_slice = (
-                UiDataSliceConfig(offset=data_slice.offset, length=data_slice.length)
-                if data_slice
-                else None
+                UiDataSliceConfig(offset=data_slice.offset, length=data_slice.length) if data_slice else None
             )
             config = RpcAccountInfoConfig(
                 account_encoding,
@@ -565,32 +523,21 @@ class SolanaWsClient:
             )
         ):
             account = RpcAccountInfoConfig(
-                encoding=(
-                    None if encoding is None else _ACCOUNT_ENCODING_TO_SOLDERS[encoding]
-                ),
-                commitment=(
-                    None if commitment is None else _COMMITMENT_TO_SOLDERS[commitment]
-                ),
+                encoding=(None if encoding is None else _ACCOUNT_ENCODING_TO_SOLDERS[encoding]),
+                commitment=(None if commitment is None else _COMMITMENT_TO_SOLDERS[commitment]),
                 min_context_slot=min_context_slot,
                 data_slice=(
                     None
                     if data_slice is None
-                    else UiDataSliceConfig(
-                        offset=data_slice.offset, length=data_slice.length
-                    )
+                    else UiDataSliceConfig(offset=data_slice.offset, length=data_slice.length)
                 ),
             )
             parsed_filters = (
                 None
                 if filters is None
-                else [
-                    x if isinstance(x, int) else Memcmp(offset=x.offset, bytes_=x.bytes)
-                    for x in filters
-                ]
+                else [x if isinstance(x, int) else Memcmp(offset=x.offset, bytes_=x.bytes) for x in filters]
             )
-            config = cast(Any, RpcProgramAccountsConfig)(
-                account, parsed_filters, with_context, sort_results
-            )
+            config = cast(Any, RpcProgramAccountsConfig)(account, parsed_filters, with_context, sort_results)
         return await self._subscribe(
             SubscriptionKind.PROGRAM,
             ProgramSubscribe(program_id, config, next(self._request_counter)),
@@ -599,15 +546,11 @@ class SolanaWsClient:
     async def logs_subscribe(
         self,
         *,
-        filter_: (
-            RpcTransactionLogsFilter | RpcTransactionLogsFilterMentions
-        ) = RpcTransactionLogsFilter.All,
+        filter_: (RpcTransactionLogsFilter | RpcTransactionLogsFilterMentions) = RpcTransactionLogsFilter.All,
         commitment: Commitment | None = None,
     ) -> Subscription:
         """Subscribe to transaction log notifications."""
-        logs_commitment = (
-            _COMMITMENT_TO_SOLDERS[commitment] if commitment is not None else None
-        )
+        logs_commitment = _COMMITMENT_TO_SOLDERS[commitment] if commitment is not None else None
         config = RpcTransactionLogsConfig(logs_commitment)
         return await self._subscribe(
             SubscriptionKind.LOGS,
@@ -625,12 +568,8 @@ class SolanaWsClient:
         max_supported_transaction_version: int | None = None,
     ) -> Subscription:
         """Subscribe to block notifications."""
-        block_commitment = (
-            _COMMITMENT_TO_SOLDERS[commitment] if commitment is not None else None
-        )
-        block_encoding = (
-            _TX_ENCODING_TO_SOLDERS[encoding] if encoding is not None else None
-        )
+        block_commitment = _COMMITMENT_TO_SOLDERS[commitment] if commitment is not None else None
+        block_encoding = _TX_ENCODING_TO_SOLDERS[encoding] if encoding is not None else None
         config = RpcBlockSubscribeConfig(
             block_commitment,
             block_encoding,
@@ -653,12 +592,8 @@ class SolanaWsClient:
         """Subscribe to signature status notifications."""
         config = None
         if commitment is not None or enable_received_notification is not None:
-            signature_commitment = (
-                _COMMITMENT_TO_SOLDERS[commitment] if commitment is not None else None
-            )
-            config = RpcSignatureSubscribeConfig(
-                signature_commitment, enable_received_notification
-            )
+            signature_commitment = _COMMITMENT_TO_SOLDERS[commitment] if commitment is not None else None
+            config = RpcSignatureSubscribeConfig(signature_commitment, enable_received_notification)
         return await self._subscribe(
             SubscriptionKind.SIGNATURE,
             SignatureSubscribe(signature, config, next(self._request_counter)),
@@ -666,9 +601,7 @@ class SolanaWsClient:
 
     async def slot_subscribe(self) -> Subscription:
         """Subscribe to slot notifications."""
-        return await self._subscribe(
-            SubscriptionKind.SLOT, SlotSubscribe(next(self._request_counter))
-        )
+        return await self._subscribe(SubscriptionKind.SLOT, SlotSubscribe(next(self._request_counter)))
 
     async def slots_updates_subscribe(self) -> Subscription:
         """Subscribe to slot update notifications."""
@@ -679,12 +612,8 @@ class SolanaWsClient:
 
     async def root_subscribe(self) -> Subscription:
         """Subscribe to root notifications."""
-        return await self._subscribe(
-            SubscriptionKind.ROOT, RootSubscribe(next(self._request_counter))
-        )
+        return await self._subscribe(SubscriptionKind.ROOT, RootSubscribe(next(self._request_counter)))
 
     async def vote_subscribe(self) -> Subscription:
         """Subscribe to vote notifications."""
-        return await self._subscribe(
-            SubscriptionKind.VOTE, VoteSubscribe(next(self._request_counter))
-        )
+        return await self._subscribe(SubscriptionKind.VOTE, VoteSubscribe(next(self._request_counter)))

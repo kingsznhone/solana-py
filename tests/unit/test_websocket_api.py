@@ -27,6 +27,7 @@ from solana.rpc.websocket_api import (
     SolanaWsClient,
     Subscription,
     SubscriptionKind,
+    UnsubscribeError,
 )
 
 
@@ -38,9 +39,7 @@ class _FakeWebSocket:
 
     async def send(self, request: str) -> None:
         if self._response is not None:
-            response = self._response.replace(
-                "{request_id}", str(json.loads(request)["id"])
-            )
+            response = self._response.replace("{request_id}", str(json.loads(request)["id"]))
             await self._messages.put(response)
 
     async def recv(self) -> str:
@@ -94,9 +93,7 @@ async def test_connect_then_close(monkeypatch):
 
 
 async def test_subscribe_propagates_server_request_error(monkeypatch):
-    fake_ws = _FakeWebSocket(
-        '{"jsonrpc":"2.0","error":{"code":-32602,"message":"invalid params"},"id":{request_id}}'
-    )
+    fake_ws = _FakeWebSocket('{"jsonrpc":"2.0","error":{"code":-32602,"message":"invalid params"},"id":{request_id}}')
 
     async def fake_connect(uri, **kwargs):
         return fake_ws
@@ -172,9 +169,7 @@ async def test_subscribe_helpers_build_typed_requests(monkeypatch):
 
     monkeypatch.setattr(client, "_subscribe", fake_subscribe)
     await client.account_subscribe(pubkey=Pubkey.default())
-    await client.logs_subscribe(
-        filter_=RpcTransactionLogsFilterMentions(Pubkey.default())
-    )
+    await client.logs_subscribe(filter_=RpcTransactionLogsFilterMentions(Pubkey.default()))
     await client.signature_subscribe(signature=Signature.default())
     assert [kind for kind, _ in captured] == [
         SubscriptionKind.ACCOUNT,
@@ -292,12 +287,67 @@ async def test_duplicate_response_is_ignored(monkeypatch):
     await client.close()
 
 
+class _Unsubscribing(_FakeWebSocket):
+    """Answers subscribes with an id and unsubscribes with the configured boolean."""
+
+    def __init__(self, unsubscribe_result: str = "true") -> None:
+        super().__init__()
+        self._unsubscribe_result = unsubscribe_result
+
+    async def send(self, request: str) -> None:
+        req = json.loads(request)
+        result = "1" if req["method"].endswith("Subscribe") else self._unsubscribe_result
+        await self._messages.put(f'{{"jsonrpc":"2.0","result":{result},"id":{req["id"]}}}')
+
+
+async def test_unsubscribe_releases_the_handle(monkeypatch):
+    client = await _connected(monkeypatch, _Unsubscribing())
+    subscription = await client.slot_subscribe()
+    assert client._subscriptions == {1: subscription}
+
+    await client.unsubscribe(subscription)
+
+    assert client._subscriptions == {}
+    await client.close()
+
+
+async def test_unsubscribe_reports_server_refusal(monkeypatch):
+    client = await _connected(monkeypatch, _Unsubscribing("false"))
+    subscription = await client.slot_subscribe()
+
+    with pytest.raises(UnsubscribeError):
+        await client.unsubscribe(subscription)
+
+    assert client._subscriptions == {1: subscription}
+    await client.close()
+
+
+async def test_notification_right_after_confirmation_finds_the_handle(monkeypatch):
+    """Registration must be done by the time the confirmation wakes subscribe()."""
+
+    class _ImmediateNotifier(_FakeWebSocket):
+        async def send(self, request: str) -> None:
+            await super().send(request)
+            await self._messages.put(
+                '{"jsonrpc":"2.0","method":"signatureNotification","params":'
+                '{"result":{"context":{"slot":1},"value":{"err":null}},"subscription":1}}'
+            )
+
+    fake_ws = _ImmediateNotifier('{"jsonrpc":"2.0","result":1,"id":{request_id}}')
+    client = await _connected(monkeypatch, fake_ws)
+
+    subscription = await client.signature_subscribe(signature=Signature.default())
+    assert isinstance(await client.recv(), SignatureNotification)
+
+    # The one-shot notification consumed the handle, so it must be gone.
+    assert subscription.subscription_id not in client._subscriptions
+    await client.close()
+
+
 async def test_response_after_timeout_is_ignored():
     """The client itself unregisters on timeout, so late responses are routine, not fatal."""
     client = SolanaWsClient()
-    envelope = next(
-        iter(parse_websocket_message('{"jsonrpc":"2.0","result":7,"id":1}'))
-    )
+    envelope = next(iter(parse_websocket_message('{"jsonrpc":"2.0","result":7,"id":1}')))
 
     client._dispatch_response(cast(SubscriptionResult, envelope))
 
@@ -457,9 +507,7 @@ async def test_remote_closure_exception_is_propagated_verbatim(monkeypatch):
 
 async def test_many_tasks_share_one_client(monkeypatch):
     """The pinned loop constrains loops, not tasks: concurrent callers each await their own id."""
-    fake_ws = _FakeWebSocket(
-        '{"jsonrpc":"2.0","result":{request_id},"id":{request_id}}'
-    )
+    fake_ws = _FakeWebSocket('{"jsonrpc":"2.0","result":{request_id},"id":{request_id}}')
     client = await _connected(monkeypatch, fake_ws)
 
     subscriptions = await asyncio.gather(*(client.slot_subscribe() for _ in range(10)))

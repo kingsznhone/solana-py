@@ -241,8 +241,6 @@ class SolanaWsClient:
         if self._closed_exc is not None:
             return
         self._closed_exc = exc
-        # Undelivered notifications are void once the connection ends.
-        self._notifications.clear()
         self._notification_ready.set()
         for pending in self._pending_requests.values():
             if not pending.future.done():
@@ -292,9 +290,9 @@ class SolanaWsClient:
     async def recv(self) -> Notification:
         """Receive one notification; cancellation leaves queued notifications intact.
 
-        Only one caller may receive at a time. A closed connection is reported
-        before any queued notification, which :meth:`_abandon` has already
-        discarded. Raw text/bytes decoding isn't supported.
+        Only one caller may receive at a time. Notifications already received
+        are delivered before the closure is reported, as ``websockets``' own
+        ``recv()`` does. Raw text/bytes decoding isn't supported.
         """
         if self._receiving:
             raise ConcurrencyError("Only one notification receiver may run at a time")

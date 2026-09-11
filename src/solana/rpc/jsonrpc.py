@@ -116,11 +116,11 @@ class SolanaJsonRpcError(Exception):
         message: str,
         data: Any | None = None,
         *,
-        request_id: str | int,
+        request_id: str | int | None,
         method: str | None = None,
         name: str | None = None,
     ) -> None:
-        """Initialize JSON-RPC error."""
+        """Initialize JSON-RPC error; ``request_id`` is null when the server could not read the request."""
         self.code = code
         self.message = message
         self.data = data
@@ -154,7 +154,7 @@ class SolanaJsonRpcError(Exception):
         cls,
         error: JsonRpcErrorObject,
         *,
-        request_id: str | int,
+        request_id: str | int | None,
         method: str | None = None,
     ) -> SolanaJsonRpcError:
         """Create an exception from a JSON-RPC error object."""
@@ -190,7 +190,9 @@ def default_jsonrpc_error_parser(
     method: str | None = None,
 ) -> SolanaJsonRpcError:
     """Default JSON-RPC error parser."""
-    return SolanaJsonRpcError.from_error_object(error, request_id=request_id, method=method)
+    return SolanaJsonRpcError.from_error_object(
+        error, request_id=request_id, method=method
+    )
 
 
 class JsonRpcResponseEnvelope(PydanticModel):

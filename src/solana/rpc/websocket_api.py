@@ -51,7 +51,6 @@ from solders.rpc.requests import (
 from solders.rpc.responses import (
     Notification,
     SignatureNotification,
-    SubscriptionError,
     SubscriptionResult,
     UnsubscribeResult,
     parse_websocket_message,
@@ -67,7 +66,12 @@ from websockets.exceptions import (
 )
 from websockets.frames import Close, CloseCode
 
-from solana.rpc.jsonrpc import JsonRpcRequestSerializer, SolanaJsonRpcError
+from solana.rpc.jsonrpc import (
+    JsonRpcErrorObject,
+    JsonRpcRequestSerializer,
+    JsonRpcResponseEnvelope,
+    SolanaJsonRpcError,
+)
 from solana.rpc.core import (
     _ACCOUNT_ENCODING_TO_SOLDERS,
     _COMMITMENT_TO_SOLDERS,
@@ -148,6 +152,25 @@ def _positive_timeout(value: float, name: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
         raise ValueError(f"{name} must be a finite positive number")
     return float(value)
+
+
+def _parse_frame(text: str) -> list[Any]:
+    """Parse one frame, keeping error envelopes away from solders.
+
+    solders resolves the numeric code into a typed error and keeps only the
+    message, and it panics outright on errors that omit ``data`` -- a panic is
+    not an ``Exception``, so the reader could not even record it.
+    """
+    if '"error"' not in text:
+        return list(parse_websocket_message(text))
+    payload = json.loads(text)
+    parsed: list[Any] = []
+    for item in payload if isinstance(payload, list) else [payload]:
+        if isinstance(item, dict) and "error" in item:
+            parsed.append(JsonRpcResponseEnvelope.model_validate(item))
+        else:
+            parsed.extend(parse_websocket_message(json.dumps(item)))
+    return parsed
 
 
 def _consume_future_exception(future: asyncio.Future[Any]) -> None:
@@ -327,13 +350,12 @@ class SolanaWsClient:
         try:
             while self._closed_exc is None:
                 raw = await ws.recv()
-                for envelope in parse_websocket_message(raw.decode() if isinstance(raw, bytes) else raw):
+                for envelope in _parse_frame(raw.decode() if isinstance(raw, bytes) else raw):
                     if self._closed_exc is not None:
                         return
-                    if isinstance(
-                        envelope,
-                        (SubscriptionResult, SubscriptionError, UnsubscribeResult),
-                    ):
+                    if isinstance(envelope, JsonRpcResponseEnvelope):
+                        self._dispatch_error(envelope)
+                    elif isinstance(envelope, (SubscriptionResult, UnsubscribeResult)):
                         self._dispatch_response(envelope)
                     else:
                         self._dispatch_notification(cast(Notification, envelope))
@@ -341,22 +363,26 @@ class SolanaWsClient:
         except Exception as exc:  # noqa: BLE001
             self._abandon(exc)
 
-    def _dispatch_response(self, envelope: SubscriptionResult | SubscriptionError | UnsubscribeResult) -> None:
+    def _dispatch_error(self, envelope: JsonRpcResponseEnvelope) -> None:
+        pending = self._pending_requests.pop(cast(int, envelope.id), None)
+        if pending is None:
+            return
+        pending.future.set_exception(
+            SolanaJsonRpcError.from_error_object(
+                cast(JsonRpcErrorObject, envelope.error),
+                request_id=envelope.id,
+                method=pending.method,
+            )
+        )
+
+    def _dispatch_response(self, envelope: SubscriptionResult | UnsubscribeResult) -> None:
         request_id = envelope.id
         # Popping first makes dispatch idempotent: a response for a request that
         # already timed out, was cancelled, or arrives twice has no waiter left.
         pending = self._pending_requests.pop(request_id, None)
         if pending is None:
             return
-        if isinstance(envelope, SubscriptionError):
-            error = SolanaJsonRpcError(
-                int(getattr(cast(Any, envelope.error), "code", -32603)),
-                str(getattr(cast(Any, envelope.error), "message", envelope.error)),
-                request_id=request_id,
-                method=pending.method,
-            )
-            pending.future.set_exception(error)
-        elif pending.kind is not None:
+        if pending.kind is not None:
             # Registered before the caller is woken: the reader keeps draining
             # frames while that coroutine is merely scheduled, so a notification
             # following the confirmation must already find the handle.

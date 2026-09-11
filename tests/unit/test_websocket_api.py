@@ -105,12 +105,54 @@ async def test_subscribe_propagates_server_request_error(monkeypatch):
     with pytest.raises(SolanaJsonRpcError) as exc_info:
         await client.account_subscribe(pubkey=Pubkey.default())
 
-    # solders' typed subscription error exposes the message but not its code;
-    # the client uses the documented internal-error fallback in that case.
-    assert exc_info.value.code == -32603
+    assert exc_info.value.code == -32602
     assert str(exc_info.value) == "invalid params"
+    assert exc_info.value.name == "INVALID_PARAMS"
     assert exc_info.value.request_id == 1
     assert exc_info.value.method == "accountSubscribe"
+    await client.close()
+
+
+@pytest.mark.parametrize(
+    ("error", "code"),
+    [
+        ('{"code":-32700,"message":"x"}', -32700),
+        ('{"code":-32601,"message":"x"}', -32601),
+        ('{"code":-32005,"message":"x","data":{"numSlotsBehind":1}}', -32005),
+        ('{"code":-32016,"message":"x","data":{"contextSlot":1}}', -32016),
+        # solders panics on these: it demands a `data` the server may omit.
+        ('{"code":-32005,"message":"x"}', -32005),
+        ('{"code":-32002,"message":"x"}', -32002),
+        ('{"code":-32016,"message":"x"}', -32016),
+        # solders has no type for this one at all.
+        ('{"code":-32099,"message":"x"}', -32099),
+    ],
+)
+async def test_server_error_reaches_the_caller_with_its_code(monkeypatch, error, code):
+    """Error frames bypass solders, which resolves the code away and rejects some of these outright."""
+    fake_ws = _FakeWebSocket('{"jsonrpc":"2.0","error":%s,"id":{request_id}}' % error)
+    client = await _connected(monkeypatch, fake_ws)
+
+    with pytest.raises(SolanaJsonRpcError) as exc_info:
+        await client.slot_subscribe()
+
+    assert exc_info.value.code == code
+    assert client.connection_state is ConnectionState.OPEN
+    await client.close()
+
+
+async def test_server_error_keeps_its_data(monkeypatch):
+    fake_ws = _FakeWebSocket(
+        '{"jsonrpc":"2.0","error":{"code":-32005,"message":"Node is unhealthy",'
+        '"data":{"numSlotsBehind":42}},"id":{request_id}}'
+    )
+    client = await _connected(monkeypatch, fake_ws)
+
+    with pytest.raises(SolanaJsonRpcError) as exc_info:
+        await client.slot_subscribe()
+
+    assert exc_info.value.data == {"numSlotsBehind": 42}
+    assert exc_info.value.name == "SERVER_ERROR_NODE_UNHEALTHY"
     await client.close()
 
 

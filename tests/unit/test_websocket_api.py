@@ -2,6 +2,8 @@
 
 import asyncio
 import itertools
+import json
+from types import SimpleNamespace
 from typing import cast
 
 import pytest
@@ -14,15 +16,46 @@ from solders.rpc.responses import (
     SignatureNotification,
     parse_websocket_message,
 )
+from solders.errors import SerdeJSONError
 from solders.signature import Signature
 from websockets.exceptions import ProtocolError
 
+from solana.rpc.jsonrpc import SolanaJsonRpcError
 from solana.rpc.websocket_api import (
     ConnectionState,
     SolanaWsClient,
     Subscription,
     SubscriptionKind,
 )
+
+
+class _FakeWebSocket:
+    def __init__(self, response: str | None = None) -> None:
+        self._response = response
+        self._messages: asyncio.Queue[str] = asyncio.Queue()
+        self.protocol = SimpleNamespace(
+            close_exc=None,
+            state=SimpleNamespace(name="OPEN"),
+        )
+        self.transport = SimpleNamespace(abort=self._abort)
+        self.closed = False
+
+    async def send(self, request: str) -> None:
+        if self._response is not None:
+            response = self._response.replace("{request_id}", str(json.loads(request)["id"]))
+            await self._messages.put(response)
+
+    async def recv(self) -> str:
+        return await self._messages.get()
+
+    async def close(self, *_args) -> None:
+        self.closed = True
+
+    async def wait_closed(self) -> None:
+        self.protocol.state.name = "CLOSED"
+
+    def _abort(self) -> None:
+        self.closed = True
 
 
 def test_subscription_kinds_are_typed():
@@ -73,6 +106,63 @@ async def test_connect_then_close(monkeypatch):
     client = SolanaWsClient()
     await client.connect()
     assert client.connection_state is ConnectionState.OPEN
+    await client.close()
+    assert client.connection_state is ConnectionState.CLOSED
+
+
+async def test_subscribe_propagates_server_request_error(monkeypatch):
+    fake_ws = _FakeWebSocket('{"jsonrpc":"2.0","error":{"code":-32602,"message":"invalid params"},"id":{request_id}}')
+
+    async def fake_connect(uri, **kwargs):
+        return fake_ws
+
+    monkeypatch.setattr("solana.rpc.websocket_api.ws_connect", fake_connect)
+    client = SolanaWsClient()
+    await client.connect()
+
+    with pytest.raises(SolanaJsonRpcError) as exc_info:
+        await client.account_subscribe(pubkey=Pubkey.default())
+
+    # solders' typed subscription error exposes the message but not its code;
+    # the client uses the documented internal-error fallback in that case.
+    assert exc_info.value.code == -32603
+    assert str(exc_info.value) == "invalid params"
+    assert exc_info.value.request_id == 1
+    assert exc_info.value.method == "accountSubscribe"
+    await client.close()
+
+
+async def test_subscribe_times_out_when_server_does_not_respond(monkeypatch):
+    fake_ws = _FakeWebSocket()
+
+    async def fake_connect(uri, **kwargs):
+        return fake_ws
+
+    monkeypatch.setattr("solana.rpc.websocket_api.ws_connect", fake_connect)
+    client = SolanaWsClient(request_timeout=0.01)
+    await client.connect()
+
+    with pytest.raises(TimeoutError):
+        await client.account_subscribe(pubkey=Pubkey.default())
+
+    await client.close()
+    assert client.connection_state is ConnectionState.CLOSED
+    assert fake_ws.closed
+
+
+async def test_subscribe_propagates_unparseable_server_response(monkeypatch):
+    fake_ws = _FakeWebSocket("not json")
+
+    async def fake_connect(uri, **kwargs):
+        return fake_ws
+
+    monkeypatch.setattr("solana.rpc.websocket_api.ws_connect", fake_connect)
+    client = SolanaWsClient()
+    await client.connect()
+
+    with pytest.raises(SerdeJSONError):
+        await client.account_subscribe(pubkey=Pubkey.default())
+
     await client.close()
     assert client.connection_state is ConnectionState.CLOSED
 

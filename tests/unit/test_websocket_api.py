@@ -39,9 +39,7 @@ class _FakeWebSocket:
 
     async def send(self, request: str) -> None:
         if self._response is not None:
-            response = self._response.replace(
-                "{request_id}", str(json.loads(request)["id"])
-            )
+            response = self._response.replace("{request_id}", str(json.loads(request)["id"]))
             await self._messages.put(response)
 
     async def recv(self) -> str:
@@ -95,9 +93,7 @@ async def test_connect_then_close(monkeypatch):
 
 
 async def test_subscribe_propagates_server_request_error(monkeypatch):
-    fake_ws = _FakeWebSocket(
-        '{"jsonrpc":"2.0","error":{"code":-32602,"message":"invalid params"},"id":{request_id}}'
-    )
+    fake_ws = _FakeWebSocket('{"jsonrpc":"2.0","error":{"code":-32602,"message":"invalid params"},"id":{request_id}}')
 
     async def fake_connect(uri, **kwargs):
         return fake_ws
@@ -162,9 +158,7 @@ async def test_server_error_keeps_its_data(monkeypatch):
 
 async def test_server_error_without_an_id_abandons_the_connection(monkeypatch):
     """A null id means no request owns the error, so every waiter must see it."""
-    fake_ws = _FakeWebSocket(
-        '{"jsonrpc":"2.0","error":{"code":-32700,"message":"Parse error"},"id":null}'
-    )
+    fake_ws = _FakeWebSocket('{"jsonrpc":"2.0","error":{"code":-32700,"message":"Parse error"},"id":null}')
     client = await _connected(monkeypatch, fake_ws)
     receiver = asyncio.ensure_future(client.recv())
 
@@ -235,9 +229,7 @@ async def test_subscribe_helpers_build_typed_requests(monkeypatch):
 
     monkeypatch.setattr(client, "_subscribe", fake_subscribe)
     await client.account_subscribe(pubkey=Pubkey.default())
-    await client.logs_subscribe(
-        filter_=RpcTransactionLogsFilterMentions(Pubkey.default())
-    )
+    await client.logs_subscribe(filter_=RpcTransactionLogsFilterMentions(Pubkey.default()))
     await client.signature_subscribe(signature=Signature.default())
     assert [kind for kind, _ in captured] == [
         SubscriptionKind.ACCOUNT,
@@ -392,12 +384,8 @@ class _Unsubscribing(_FakeWebSocket):
 
     async def send(self, request: str) -> None:
         req = json.loads(request)
-        result = (
-            "1" if req["method"].endswith("Subscribe") else self._unsubscribe_result
-        )
-        await self._messages.put(
-            f'{{"jsonrpc":"2.0","result":{result},"id":{req["id"]}}}'
-        )
+        result = "1" if req["method"].endswith("Subscribe") else self._unsubscribe_result
+        await self._messages.put(f'{{"jsonrpc":"2.0","result":{result},"id":{req["id"]}}}')
 
 
 async def test_unsubscribe_releases_the_handle(monkeypatch):
@@ -468,9 +456,7 @@ async def test_notification_right_after_confirmation_finds_the_handle(monkeypatc
 async def test_response_after_timeout_is_ignored():
     """The client itself unregisters on timeout, so late responses are routine, not fatal."""
     client = SolanaWsClient()
-    envelope = next(
-        iter(parse_websocket_message('{"jsonrpc":"2.0","result":7,"id":1}'))
-    )
+    envelope = next(iter(parse_websocket_message('{"jsonrpc":"2.0","result":7,"id":1}')))
 
     client._dispatch_response(cast(SubscriptionResult, envelope))
 
@@ -653,9 +639,7 @@ async def test_remote_closure_exception_is_propagated_verbatim(monkeypatch):
 
 async def test_many_tasks_share_one_client(monkeypatch):
     """The pinned loop constrains loops, not tasks: concurrent callers each await their own id."""
-    fake_ws = _FakeWebSocket(
-        '{"jsonrpc":"2.0","result":{request_id},"id":{request_id}}'
-    )
+    fake_ws = _FakeWebSocket('{"jsonrpc":"2.0","result":{request_id},"id":{request_id}}')
     client = await _connected(monkeypatch, fake_ws)
 
     subscriptions = await asyncio.gather(*(client.slot_subscribe() for _ in range(10)))

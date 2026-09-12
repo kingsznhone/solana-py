@@ -36,6 +36,24 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
+Iteration only ends when the connection closes, and closing already cancels
+every subscription it owned, so the `unsubscribe()` calls above are no-ops on
+that path. They matter when you stop early while the connection stays open:
+
+```python
+async with SolanaWsClient("wss://api.devnet.solana.com") as websocket:
+    logs_sub = await websocket.logs_subscribe()
+    try:
+        async for message in websocket:
+            print(f"Received: {message}")
+            break
+    finally:
+        # Frees the server-side subscription; the connection stays usable.
+        await websocket.unsubscribe(logs_sub)
+
+    slot_sub = await websocket.slot_subscribe()
+```
+
 ## Managing the connection lifecycle
 
 The asynchronous context manager is the recommended form. It connects on entry
@@ -69,7 +87,8 @@ cannot execute Python cleanup code.
 2. **Subscribe to account changes**: Monitor changes to a specific account
 3. **Subscribe to logs**: Listen to transaction logs
 4. **Process messages**: Handle incoming event messages
-5. **Unsubscribe**: Cancel each subscription with the handle returned by its subscribe call
+5. **Unsubscribe**: Cancel each subscription with the handle returned by its subscribe call,
+   which is a no-op once the connection is closed
 
 ## Subscription Types
 

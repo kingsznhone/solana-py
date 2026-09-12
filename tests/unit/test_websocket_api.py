@@ -23,6 +23,7 @@ from websockets.frames import Close, CloseCode
 from solana.rpc.jsonrpc import SolanaJsonRpcError
 from solana.rpc.websocket_api import (
     ConnectionState,
+    OverflowPolicy,
     SolanaWsClient,
     Subscription,
     SubscriptionKind,
@@ -324,7 +325,35 @@ async def test_notification_queue_overflow():
     client._dispatch_notification(notification)
     with pytest.raises(ProtocolError):
         client._dispatch_notification(notification)
+    assert client.dropped_notifications == 0
     await client.close()
+
+
+def _slot_notification(slot: int) -> Notification:
+    return _notification(
+        '{"jsonrpc":"2.0","method":"slotNotification","params":'
+        '{"result":{"parent":1,"root":1,"slot":%d},"subscription":1}}' % slot
+    )
+
+
+@pytest.mark.parametrize(
+    ("overflow", "expected"),
+    [(OverflowPolicy.DROP_OLDEST, [2, 3]), (OverflowPolicy.DROP_NEWEST, [1, 2])],
+)
+async def test_lossy_overflow_keeps_the_queue_alive(overflow, expected):
+    client = SolanaWsClient(notification_queue_size=2, overflow=overflow)
+    for slot in (1, 2, 3):
+        client._dispatch_notification(_slot_notification(slot))
+
+    assert client.dropped_notifications == 1
+    kept = [cast(SlotNotification, await client.recv()).result.slot for _ in expected]
+    assert kept == expected
+    await client.close()
+
+
+async def test_overflow_policy_rejects_unknown_values():
+    with pytest.raises(ValueError):
+        SolanaWsClient(overflow="block")
 
 
 async def _connected(monkeypatch, fake_ws):

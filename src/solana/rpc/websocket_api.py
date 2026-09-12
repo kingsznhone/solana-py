@@ -132,6 +132,21 @@ class ConnectionState(Enum):
     CLOSED = "closed"
 
 
+class OverflowPolicy(StrEnum):
+    """What a full notification queue does to the next notification.
+
+    Blocking the reader is deliberately not offered: it also stops RPC
+    responses, so ``unsubscribe`` -- the one call that could drain the flood --
+    would never be confirmed, and the unread socket stalls the closing
+    handshake. Both lossy policies count what they discard in
+    :attr:`SolanaWsClient.dropped_notifications`.
+    """
+
+    RAISE = "raise"
+    DROP_OLDEST = "drop_oldest"
+    DROP_NEWEST = "drop_newest"
+
+
 class UnsubscribeError(Exception):
     """The server explicitly refused to cancel a subscription."""
 
@@ -226,7 +241,8 @@ class SolanaWsClient:
         uri: str = "ws://localhost:8900",
         *,
         request_timeout: float = 10.0,
-        notification_queue_size: int = 1024,
+        notification_queue_size: int = 10_000,
+        overflow: OverflowPolicy = OverflowPolicy.RAISE,
         **kwargs: Any,
     ) -> None:
         """Create a client; the WebSocket is opened by :meth:`connect`."""
@@ -241,6 +257,8 @@ class SolanaWsClient:
         if type(notification_queue_size) is not int or notification_queue_size <= 0:
             raise ValueError("notification_queue_size must be a positive integer")
         self._notification_queue_size = notification_queue_size
+        self._overflow = OverflowPolicy(overflow)
+        self._dropped_notifications = 0
         self._notifications: deque[Notification] = deque()
         self._notification_ready = asyncio.Event()
         self._receiving = False
@@ -279,6 +297,11 @@ class SolanaWsClient:
         if self._ws is None or self._closed_exc is not None:
             return ConnectionState.CLOSED
         return ConnectionState.OPEN
+
+    @property
+    def dropped_notifications(self) -> int:
+        """Count notifications a lossy overflow policy discarded; always 0 under ``RAISE``."""
+        return self._dropped_notifications
 
     def _abandon(self, exc: BaseException) -> None:
         """Record why the stream ended and wake every waiter; the first cause wins.
@@ -427,7 +450,12 @@ class SolanaWsClient:
         if isinstance(notification, SignatureNotification):
             self._subscriptions.pop(subscription_id, None)
         if len(self._notifications) >= self._notification_queue_size:
-            raise ProtocolError("WebSocket notification queue overflow")
+            if self._overflow is OverflowPolicy.RAISE:
+                raise ProtocolError("WebSocket notification queue overflow")
+            self._dropped_notifications += 1
+            if self._overflow is OverflowPolicy.DROP_NEWEST:
+                return
+            self._notifications.popleft()
         self._notifications.append(notification)
         self._notification_ready.set()
 

@@ -491,6 +491,29 @@ async def test_close_before_connect_refuses_to_open_a_socket(monkeypatch):
     assert opened == []
 
 
+async def test_failed_handshake_leaves_the_client_retryable(monkeypatch):
+    """A handshake that never produced a socket owns nothing, so retrying is not reuse."""
+    attempts = []
+
+    async def flaky_connect(uri, **kwargs):
+        attempts.append(uri)
+        if len(attempts) == 1:
+            raise OSError("connection refused")
+        return _FakeWebSocket()
+
+    monkeypatch.setattr("solana.rpc.websocket_api.ws_connect", flaky_connect)
+    client = SolanaWsClient()
+
+    with pytest.raises(OSError, match="connection refused"):
+        await client.connect()
+    assert client.connection_state is ConnectionState.CLOSED
+
+    await client.connect()
+    assert client.connection_state is ConnectionState.OPEN
+    assert len(attempts) == 2
+    await client.close()
+
+
 async def test_close_drains_queued_notifications(monkeypatch):
     client = await _connected(monkeypatch, _FakeWebSocket())
     client._dispatch_notification(

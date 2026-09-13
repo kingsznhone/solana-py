@@ -81,6 +81,53 @@ This covers cancellation, `KeyboardInterrupt`, and application errors while
 the process is running. Forced termination such as `SIGKILL` or `os._exit`
 cannot execute Python cleanup code.
 
+## Cancellation and timeout semantics
+
+Every `*_subscribe()` and `unsubscribe()` call waits for the server to confirm
+the request, bounded by `request_timeout` (10 seconds by default, configurable
+per client).
+
+If that wait ends early — the client's own timeout expires, or the awaiting
+task is cancelled (`asyncio.wait_for`, an outer `asyncio.timeout`,
+`task.cancel()`, `KeyboardInterrupt`) — **and the request was already written
+to the socket**, the client tears down the whole connection before propagating
+`TimeoutError` or `CancelledError`:
+
+- every other in-flight request fails with the same exception,
+- every `Subscription` this connection owned is dropped,
+- a pending `recv()` delivers the notifications it had already queued, then
+  raises,
+- the client cannot be reused; construct a new one and resubscribe.
+
+This is deliberate. A confirmation that never arrived may still be in flight,
+which means the server may have created a subscription whose ID the client
+never learned. Such an orphaned subscription keeps pushing notifications that
+no handle maps to, and `unsubscribe()` cannot cancel it, because cancelling
+requires that ID. Dropping the connection is the only way to release the
+server-side state, so plan for reconnect-and-resubscribe rather than expecting
+a timed-out subscribe to leave a usable client behind:
+
+```python
+try:
+    async with asyncio.timeout(2):
+        subscription = await websocket.logs_subscribe()
+except TimeoutError:
+    # The connection is gone: reconnect with a new client and resubscribe.
+    ...
+```
+
+A cancellation that lands *before* the request reaches the wire — for example
+while it is still queued behind the send lock — leaves the connection intact
+and fails only that one call.
+
+Two waits are not affected:
+
+- `recv()` is cancellation-safe. Cancelling it leaves queued notifications in
+  place for the next receiver and does not touch the connection.
+- `close()` is shielded. Cancelling a task while it closes (a repeated Ctrl+C,
+  for instance) still completes the closing handshake instead of leaving a
+  half-closed socket behind.
+
 ## Explanation
 
 1. **Create WebSocket connection**: Connect to the Solana WebSocket endpoint

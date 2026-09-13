@@ -345,7 +345,7 @@ async def test_lossy_overflow_keeps_the_queue_alive(overflow, expected):
 
 async def test_overflow_policy_rejects_unknown_values():
     with pytest.raises(ValueError):
-        SolanaWsClient(overflow="block")
+        SolanaWsClient(overflow=cast(OverflowPolicy, "block"))
 
 
 async def _connected(monkeypatch, fake_ws):
@@ -474,7 +474,9 @@ async def test_recv_blocked_during_local_close_reports_clean_closure(monkeypatch
 
     with pytest.raises(ConnectionClosedOK) as exc_info:
         await receiver
-    assert exc_info.value.rcvd.code == CloseCode.NORMAL_CLOSURE
+    rcvd = exc_info.value.rcvd
+    assert rcvd is not None
+    assert rcvd.code == CloseCode.NORMAL_CLOSURE
 
 
 async def test_async_for_exits_cleanly_on_local_close(monkeypatch):
